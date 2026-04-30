@@ -1,0 +1,26 @@
+[package]
+name = "mopid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+mopi-config = { path = "../../crates/config" }
+mopi-crawl = { path = "../../crates/crawl" }
+mopi-extract = { path = "../../crates/extract" }
+mopi-index-lexical = { path = "../../crates/index-lexical" }
+mopi-index-meta = { path = "../../crates/index-meta" }
+mopi-ipc = { path = "../../crates/ipc" }
+mopi-types = { path = "../../crates/types" }
+tokio.workspace = true
+tracing.workspace = true
+camino.workspace = true
+uuid.workspace = true
+mopi-embed = { version = "0.1.0", path = "../../crates/embed" }
+mopi-index-vector = { version = "0.1.0", path = "../../crates/index-vector" }
+mopi-chunking = { version = "0.1.0", path = "../../crates/chunking" }
+mopi-rank = { version = "0.1.0", path = "../../crates/rank" }
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "mopi-extract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+camino.workspace = true
+chrono = "0.4.44"
+infer = "0.16.0"
+lopdf = "0.34.0"
+mime_guess = "2.0.5"
+mopi-config = { path = "../config" }
+quick-xml = "0.37.2"
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tracing.workspace = true
+zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

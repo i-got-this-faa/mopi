@@ -1,0 +1,20 @@
+[package]
+name = "mopi-index-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+camino.workspace = true
+mopi-config = { path = "../config" }
+rusqlite = { version = "0.32.0", features = ["bundled"] }
+serde.workspace = true
+thiserror.workspace = true
+mopi-types = { path = "../types" }
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,3 @@
+Hello, world!
+This is a plain text file for testing extraction.
+It has multiple lines and some special characters like 🚀.

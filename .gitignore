@@ -1,0 +1,19 @@
+/target/
+/.idea/
+/.vscode/
+*.log
+
+# Runtime and cache artifacts
+/.mopi/
+/fixtures/tmp/
+
+# XDG-like development outputs
+/var/cache/
+/var/data/
+/var/runtime/
+
+plans/
+presentation/
+
+
+.fastembed_cache/

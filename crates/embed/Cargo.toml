@@ -1,0 +1,13 @@
+[package]
+name = "mopi-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fastembed = { version = "5.13.4", default-features = false, features = ["hf-hub", "hf-hub-rustls-tls", "online", "ort-load-dynamic"] }
+mopi-config = { version = "0.1.0", path = "../config" }
+thiserror.workspace = true
+
+[lints]
+workspace = true
