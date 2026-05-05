@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
     let socket_path = config.daemon.socket_path(&paths);
 
     prepare_socket(socket_path.as_std_path()).await?;
+    let listener = UnixListener::bind(socket_path.as_std_path())?;
 
     let meta_path = paths.data_dir.join("meta.db");
     let lexical_path = paths.data_dir.join("lexical");
@@ -66,23 +67,9 @@ async fn main() -> Result<()> {
         Err(_) => Some(VectorIndex::new(384, 16)), // AllMiniLML6V2 is 384d
     };
 
-    let embedder = if config.embedding.backend != "none" {
-        let embedding_config = config.embedding.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        std::thread::spawn(move || {
-            let res = FastEmbedProvider::new(&embedding_config);
-            let _ = tx.send(res);
-        });
-        Some(rx)
-    } else {
-        None
-    };
-
     let (tx, rx) = mpsc::channel(100);
     let (watch_signal_tx, watch_signal_rx) = mpsc::channel(100);
     let (watch_control_tx, watch_control_rx) = mpsc::channel(8);
-
-    let listener = UnixListener::bind(socket_path.as_std_path())?;
     let state = Arc::new(SharedState {
         paths: paths.clone(),
         status: RwLock::new(DaemonStatus {
@@ -103,31 +90,36 @@ async fn main() -> Result<()> {
         watch_control_tx: watch_control_tx.clone(),
     });
 
-    if let Some(rx) = embedder {
-        let state_for_embedder = Arc::clone(&state);
-        tokio::spawn(async move {
-            match rx.await {
-                Ok(Ok(provider)) => {
-                    if let Ok(mut embedder) = state_for_embedder.embedder.lock() {
-                        *embedder = Some(provider);
-                    }
-                    info!("embedding model loaded successfully");
+    let server_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let state = Arc::clone(&server_state);
+                    tokio::spawn(async move {
+                        if let Err(error) = handle_client(stream, state).await {
+                            warn!(error = %error, "client session ended with error");
+                        }
+                    });
                 }
-                Ok(Err(e)) => {
-                    warn!(error = %e, "failed to load embedding model, continuing in lexical-only mode");
-                }
-                Err(_) => {
-                    warn!("embedding model initialization thread crashed");
+                Err(error) => {
+                    error!(error = %error, "ipc listener failed");
+                    break;
                 }
             }
-            state_for_embedder.status.write().await.state = DaemonState::Ready;
-        });
-    } else {
-        let state_for_ready = Arc::clone(&state);
-        tokio::spawn(async move {
-            state_for_ready.status.write().await.state = DaemonState::Ready;
-        });
+        }
+    });
+
+    if let Some(provider) = initialize_embedder(&config)? {
+        if let Ok(mut embedder) = state.embedder.lock() {
+            *embedder = Some(provider);
+        }
+        info!("embedding model loaded successfully");
+        if let Err(error) = recover_empty_vector_index(&state).await {
+            warn!(error = %error, "failed to recover empty vector index");
+        }
     }
+    state.status.write().await.state = DaemonState::Ready;
 
     // Start background indexing
     let state_for_indexer = Arc::clone(&state);
@@ -165,15 +157,6 @@ async fn main() -> Result<()> {
 
     loop {
         tokio::select! {
-            accept_result = listener.accept() => {
-                let (stream, _) = accept_result?;
-                let state = Arc::clone(&state);
-                tokio::spawn(async move {
-                    if let Err(error) = handle_client(stream, state).await {
-                        warn!(error = %error, "client session ended with error");
-                    }
-                });
-            }
             _ = tokio::signal::ctrl_c() => {
                 info!("received shutdown signal");
                 break;
@@ -186,6 +169,27 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn initialize_embedder(config: &AppConfig) -> Result<Option<FastEmbedProvider>> {
+    if config.embedding.backend == "none" {
+        return Ok(None);
+    }
+
+    info!("initializing embedding model before indexing starts...");
+    match FastEmbedProvider::new(&config.embedding) {
+        Ok(provider) => Ok(Some(provider)),
+        Err(error) => {
+            if config.embedding.strict_startup {
+                Err(anyhow!(
+                    "failed to load embedding model with strict startup enabled: {error}"
+                ))
+            } else {
+                warn!(error = %error, "failed to load embedding model, continuing in lexical-only mode");
+                Ok(None)
+            }
+        }
+    }
 }
 
 async fn handle_client(mut stream: UnixStream, status: SharedStatus) -> Result<()> {
@@ -373,25 +377,35 @@ async fn dispatch_request(envelope: RequestEnvelope, state: &SharedStatus) -> Re
 async fn run_indexer(state: SharedStatus, mut rx: mpsc::Receiver<Vec<mopi_crawl::ChangeEvent>>) {
     info!("indexer worker started");
     while let Some(events) = rx.recv().await {
+        info!("indexer received {} events", events.len());
         for event in events {
             if let Err(e) = process_change_event(&state, event).await {
                 error!(error = %e, "failed to process change event");
             }
         }
+        info!("committing lexical index...");
         match state.lexical.lock() {
             Ok(mut lexical) => {
+                info!("got lexical lock");
                 if let Err(e) = lexical.commit() {
                     error!(error = %e, "failed to commit lexical index");
+                } else {
+                    info!("lexical index committed");
                 }
             }
             Err(_) => error!("failed to lock lexical store for commit"),
         }
 
+        info!("locking vector index for save...");
         if let Ok(mut vector) = state.vector.lock() {
+            info!("got vector lock");
             if let Some(v) = vector.as_mut() {
                 let vector_path = state.paths.data_dir.join("vector");
+                info!("saving vector index to {:?}", vector_path);
                 if let Err(e) = v.save(vector_path.as_std_path(), "hnsw") {
                     error!(error = %e, "failed to save vector index");
+                } else {
+                    info!("vector index saved");
                 }
             }
         }
@@ -402,6 +416,7 @@ async fn process_change_event(state: &SharedStatus, event: mopi_crawl::ChangeEve
     match event.kind {
         ChangeKind::Added | ChangeKind::Modified => {
             if let Some(candidate) = event.candidate {
+                info!(path = %candidate.canonical_path, "processing add/modify");
                 let config = state.config.read().await.extraction.clone();
                 let root_path = state
                     .config
@@ -413,6 +428,7 @@ async fn process_change_event(state: &SharedStatus, event: mopi_crawl::ChangeEve
                     .ok_or_else(|| anyhow!("invalid crawl root id {}", candidate.root_id))?;
                 match state.dispatcher.extract(&candidate.canonical_path, &config) {
                     Ok(output) => {
+                        info!(path = %candidate.canonical_path, "extraction successful");
                         let existing_id = state
                             .meta
                             .lock()
@@ -438,17 +454,16 @@ async fn process_change_event(state: &SharedStatus, event: mopi_crawl::ChangeEve
                                 .delete_document(id)?;
 
                             // Delete from vector index
-                            let meta = state
+                            let chunk_ids = state
                                 .meta
                                 .lock()
-                                .map_err(|_| anyhow!("meta store mutex poisoned"))?;
-                            if let Ok(chunk_ids) = meta.get_chunks_for_file(id) {
-                                if let Ok(mut vector) = state.vector.lock() {
-                                    if let Some(v) = vector.as_mut() {
-                                        let chunk_ids_usize: Vec<usize> =
-                                            chunk_ids.into_iter().map(|id| id as usize).collect();
-                                        let _ = v.delete_chunks(&chunk_ids_usize);
-                                    }
+                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                                .get_chunks_for_file(id)?;
+                            if let Ok(mut vector) = state.vector.lock() {
+                                if let Some(v) = vector.as_mut() {
+                                    let chunk_ids_usize: Vec<usize> =
+                                        chunk_ids.into_iter().map(|id| id as usize).collect();
+                                    let _ = v.delete_chunks(&chunk_ids_usize);
                                 }
                             }
                         }
@@ -496,42 +511,65 @@ async fn process_change_event(state: &SharedStatus, event: mopi_crawl::ChangeEve
                         let chunks = chunker.chunk(&output.text);
                         let mut chunk_data = Vec::new();
 
-                        // We need a chunk_id for VectorHit, and also integer id for hnsw
-                        // Let's store chunks in metadata db and get their ids.
-                        let mut sqlite_chunk_ids = Vec::new();
-                        for chunk in &chunks {
-                            let cid = state
-                                .meta
-                                .lock()
-                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                                .insert_chunk(&doc_id.0.to_string(), &chunk.text)?;
-                            sqlite_chunk_ids.push(cid);
-                        }
+                        info!(path = %candidate.canonical_path, chunk_count = chunks.len(), "chunking complete");
+                        let chunk_texts: Vec<String> =
+                            chunks.iter().map(|chunk| chunk.text.clone()).collect();
+                        let sqlite_chunk_ids = state
+                            .meta
+                            .lock()
+                            .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                            .replace_chunks(&doc_id.0.to_string(), &chunk_texts)?;
+                        state
+                            .meta
+                            .lock()
+                            .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                            .set_extractor_status(&doc_id.0.to_string(), "done")?;
+                        info!(path = %candidate.canonical_path, "chunks stored in metadata db");
 
-                        if let Ok(mut embedder_guard) = state.embedder.lock() {
-                            if let Some(embedder) = embedder_guard.as_mut() {
-                                let text_slices: Vec<&str> =
-                                    chunks.iter().map(|c| c.text.as_str()).collect();
-                                match embedder.embed_chunks(&text_slices) {
-                                    Ok(embeddings) => {
-                                        for (i, embedding) in embeddings.into_iter().enumerate() {
-                                            chunk_data
-                                                .push((sqlite_chunk_ids[i] as usize, embedding));
+                        match state.embedder.lock() {
+                            Ok(mut embedder_guard) => {
+                                if let Some(embedder) = embedder_guard.as_mut() {
+                                    info!(path = %candidate.canonical_path, "generating embeddings...");
+                                    let text_slices: Vec<&str> =
+                                        chunks.iter().map(|c| c.text.as_str()).collect();
+                                    match embedder.embed_chunks(&text_slices) {
+                                        Ok(embeddings) => {
+                                            if embeddings.len() != sqlite_chunk_ids.len() {
+                                                warn!(
+                                                    path = %candidate.canonical_path,
+                                                    expected = sqlite_chunk_ids.len(),
+                                                    actual = embeddings.len(),
+                                                    "embedding batch size mismatch"
+                                                );
+                                            }
+                                            info!(path = %candidate.canonical_path, "embeddings generated");
+                                            for (chunk_id, embedding) in
+                                                sqlite_chunk_ids.iter().zip(embeddings.into_iter())
+                                            {
+                                                chunk_data.push((*chunk_id as usize, embedding));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!(path = %candidate.canonical_path, error = %e, "embedding failed");
                                         }
                                     }
-                                    Err(e) => {
-                                        warn!(path = %candidate.canonical_path, error = %e, "embedding failed");
-                                    }
+                                } else {
+                                    info!(path = %candidate.canonical_path, "embedder unavailable, skipping semantic index");
                                 }
+                            }
+                            Err(_) => {
+                                warn!(path = %candidate.canonical_path, "embedder mutex poisoned, skipping semantic index");
                             }
                         }
 
                         if !chunk_data.is_empty() {
                             if let Ok(mut vector) = state.vector.lock() {
                                 if let Some(v) = vector.as_mut() {
+                                    info!(path = %candidate.canonical_path, "upserting to vector index...");
                                     if let Err(e) = v.upsert_chunks(&chunk_data) {
                                         warn!(path = %candidate.canonical_path, error = %e, "vector upsert failed");
                                     }
+                                    info!(path = %candidate.canonical_path, "vector upsert complete");
                                 }
                             }
                         }
@@ -591,6 +629,102 @@ async fn process_change_event(state: &SharedStatus, event: mopi_crawl::ChangeEve
             }
         }
         ChangeKind::Unchanged => {}
+    }
+
+    Ok(())
+}
+
+async fn recover_empty_vector_index(state: &SharedStatus) -> Result<()> {
+    let chunk_count = state
+        .meta
+        .lock()
+        .map_err(|_| anyhow!("meta store mutex poisoned"))?
+        .count_chunks()?;
+    if chunk_count == 0 {
+        return Ok(());
+    }
+
+    let needs_recovery = match state.vector.lock() {
+        Ok(vector) => vector
+            .as_ref()
+            .is_some_and(|index| index.point_count() == 0),
+        Err(_) => false,
+    };
+    if !needs_recovery {
+        return Ok(());
+    }
+
+    let batch_size = state
+        .config
+        .read()
+        .await
+        .embedding
+        .indexing_batch_size
+        .max(1);
+    info!(
+        chunk_count,
+        batch_size, "vector index is empty, backfilling from stored chunks"
+    );
+
+    let mut last_chunk_id = 0_i64;
+    loop {
+        let chunk_batch = state
+            .meta
+            .lock()
+            .map_err(|_| anyhow!("meta store mutex poisoned"))?
+            .list_chunks_after(last_chunk_id, batch_size)?;
+        if chunk_batch.is_empty() {
+            break;
+        }
+
+        let embeddings = {
+            let mut embedder_guard = state
+                .embedder
+                .lock()
+                .map_err(|_| anyhow!("embedder mutex poisoned"))?;
+            let embedder = embedder_guard
+                .as_mut()
+                .ok_or_else(|| anyhow!("embedder not available for vector recovery"))?;
+            let text_slices: Vec<&str> =
+                chunk_batch.iter().map(|(_, text)| text.as_str()).collect();
+            embedder.embed_chunks(&text_slices)?
+        };
+
+        if embeddings.len() != chunk_batch.len() {
+            return Err(anyhow!(
+                "embedding batch size mismatch during vector recovery: expected {}, got {}",
+                chunk_batch.len(),
+                embeddings.len()
+            ));
+        }
+
+        let chunk_vectors: Vec<(usize, Vec<f32>)> = chunk_batch
+            .iter()
+            .zip(embeddings.into_iter())
+            .map(|((chunk_id, _), embedding)| (*chunk_id as usize, embedding))
+            .collect();
+
+        if let Ok(mut vector) = state.vector.lock() {
+            if let Some(index) = vector.as_mut() {
+                index.upsert_chunks(&chunk_vectors)?;
+            }
+        }
+
+        last_chunk_id = chunk_batch
+            .last()
+            .map(|(chunk_id, _)| *chunk_id)
+            .unwrap_or(last_chunk_id);
+    }
+
+    let vector_path = state.paths.data_dir.join("vector");
+    if let Ok(mut vector) = state.vector.lock() {
+        if let Some(index) = vector.as_mut() {
+            index.save(vector_path.as_std_path(), "hnsw")?;
+            info!(
+                point_count = index.point_count(),
+                "vector recovery complete"
+            );
+        }
     }
 
     Ok(())
@@ -767,5 +901,73 @@ async fn prepare_socket(socket_path: &std::path::Path) -> Result<()> {
             std::fs::remove_file(socket_path)?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::TempDir;
+
+    const LOCAL_MODEL_FILES: [&str; 5] = [
+        "model.onnx",
+        "tokenizer.json",
+        "config.json",
+        "special_tokens_map.json",
+        "tokenizer_config.json",
+    ];
+
+    #[test]
+    fn initialize_embedder_returns_none_when_backend_disabled() {
+        let mut config = AppConfig::default();
+        config.embedding.backend = String::from("none");
+
+        let embedder = initialize_embedder(&config).expect("backend none should not fail");
+        assert!(embedder.is_none());
+    }
+
+    #[test]
+    fn initialize_embedder_falls_back_when_loading_fails_without_strict_startup() {
+        let model_dir = make_invalid_local_model_dir();
+        let mut config = AppConfig::default();
+        config.embedding.model_path = model_dir.path().to_string_lossy().to_string();
+
+        let embedder =
+            initialize_embedder(&config).expect("non-strict startup should fall back cleanly");
+        assert!(embedder.is_none());
+    }
+
+    #[test]
+    fn initialize_embedder_errors_when_strict_startup_loading_fails() {
+        let model_dir = make_invalid_local_model_dir();
+        let mut config = AppConfig::default();
+        config.embedding.model_path = model_dir.path().to_string_lossy().to_string();
+        config.embedding.strict_startup = true;
+
+        match initialize_embedder(&config) {
+            Ok(_) => panic!("strict startup should propagate load errors"),
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .contains("failed to load embedding model with strict startup enabled")
+            ),
+        }
+    }
+
+    fn make_invalid_local_model_dir() -> TempDir {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        for file in LOCAL_MODEL_FILES {
+            std::fs::write(dir.path().join(file), b"invalid")
+                .expect("placeholder file should be written");
+        }
+        let unreadable = dir.path().join("model.onnx");
+        let mut permissions = std::fs::metadata(&unreadable)
+            .expect("model file metadata should load")
+            .permissions();
+        permissions.set_mode(0o000);
+        std::fs::set_permissions(&unreadable, permissions)
+            .expect("model file permissions should be updated");
+        dir
     }
 }

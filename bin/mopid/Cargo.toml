@@ -22,5 +22,8 @@ mopi-index-vector = { version = "0.1.0", path = "../../crates/index-vector" }
 mopi-chunking = { version = "0.1.0", path = "../../crates/chunking" }
 mopi-rank = { version = "0.1.0", path = "../../crates/rank" }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

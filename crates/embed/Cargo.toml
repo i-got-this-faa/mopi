@@ -5,9 +5,17 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-fastembed = { version = "5.13.4", default-features = false, features = ["hf-hub", "hf-hub-rustls-tls", "online", "ort-load-dynamic"] }
+huggingface_hub = { package = "hf-hub", version = "0.5.0" }
 mopi-config = { version = "0.1.0", path = "../config" }
+ndarray = "0.17.2"
+ort = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
+serde_json.workspace = true
 thiserror.workspace = true
+tokenizers = "0.22.1"
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -6,11 +6,11 @@ use gtk4::{
     SelectionMode,
 };
 use gtk4_layer_shell::{Layer, LayerShell};
-use mopi_config::MopiPaths;
+use mopi_config::{AppConfig, MopiPaths};
 use mopi_ipc::{Request, RequestEnvelope, Response, ResponseEnvelope, read_frame, write_frame};
 use mopi_types::{MatchReason, QueryId, SearchResult};
 use tokio::net::UnixStream;
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 #[derive(Debug, Clone)]
 enum GuiEvent {
@@ -22,14 +22,15 @@ fn main() -> Result<()> {
     mopi_config::init_tracing();
 
     let paths = MopiPaths::discover()?;
-    let socket_path = paths.socket_file();
+    let config = AppConfig::load_or_default(&paths)?;
+    let socket_path = config.daemon.socket_path(&paths);
 
     let app = Application::builder()
         .application_id("com.github.mopi.kiwi")
         .build();
 
     let (gui_tx, gui_rx) = async_channel::unbounded();
-    let (search_tx, mut search_rx) = mpsc::channel::<String>(10);
+    let (search_tx, mut search_rx) = watch::channel(String::new());
 
     // Background Tokio thread
     std::thread::spawn(move || {
@@ -42,46 +43,62 @@ fn main() -> Result<()> {
             let mut stream = match UnixStream::connect(socket_path.as_std_path()).await {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = gui_tx.try_send(GuiEvent::Error(format!("Failed to connect to mopid: {}", e)));
+                    let _ = gui_tx.try_send(GuiEvent::Error(format!(
+                        "Failed to connect to mopid: {}",
+                        e
+                    )));
                     return;
                 }
             };
 
-            let mut current_query_id = QueryId::new();
-
             loop {
                 tokio::select! {
-                    Some(query_str) = search_rx.recv() => {
-                        current_query_id = QueryId::new();
-                        let query = mopi_query::parse_query(query_str);
-                        let req = Request::Search {
-                            query_id: current_query_id,
-                            query,
-                        };
-                        if let Err(e) = write_frame(&mut stream, &RequestEnvelope::new(req)).await {
-                            let _ = gui_tx.try_send(GuiEvent::Error(format!("IPC write error: {}", e)));
+                    changed = search_rx.changed() => {
+                        if changed.is_err() {
                             break;
                         }
                     }
-                    res = read_frame::<ResponseEnvelope>(&mut stream) => {
-                        match res {
-                            Ok(env) => {
-                                match env.response {
-                                    Response::SearchResults { query_id, results } => {
-                                        if query_id == current_query_id {
-                                            let _ = gui_tx.try_send(GuiEvent::ResultsUpdated(results));
-                                        }
-                                    }
-                                    Response::Error { message } => {
-                                        let _ = gui_tx.try_send(GuiEvent::Error(message));
-                                    }
-                                    _ => {}
+                    else => break,
+                }
+
+                let mut next_query = search_rx.borrow().clone();
+                while search_rx.has_changed().unwrap_or(false) {
+                    if search_rx.changed().await.is_err() {
+                        return;
+                    }
+                    next_query = search_rx.borrow().clone();
+                }
+
+                let current_query_id = QueryId::new();
+                let query = mopi_query::parse_query(next_query.clone());
+                let req = Request::Search {
+                    query_id: current_query_id,
+                    query,
+                };
+                if let Err(e) = write_frame(&mut stream, &RequestEnvelope::new(req)).await {
+                    let _ = gui_tx.try_send(GuiEvent::Error(format!("IPC write error: {}", e)));
+                    break;
+                }
+
+                loop {
+                    match read_frame::<ResponseEnvelope>(&mut stream).await {
+                        Ok(env) => match env.response {
+                            Response::SearchResults { query_id, results } => {
+                                if query_id == current_query_id {
+                                    let _ = gui_tx.try_send(GuiEvent::ResultsUpdated(results));
+                                    break;
                                 }
                             }
-                            Err(e) => {
-                                let _ = gui_tx.try_send(GuiEvent::Error(format!("IPC read error: {}", e)));
+                            Response::Error { message } => {
+                                let _ = gui_tx.try_send(GuiEvent::Error(message));
                                 break;
                             }
+                            _ => {}
+                        },
+                        Err(e) => {
+                            let _ =
+                                gui_tx.try_send(GuiEvent::Error(format!("IPC read error: {}", e)));
+                            return;
                         }
                     }
                 }
@@ -140,10 +157,10 @@ fn main() -> Result<()> {
             }
         });
 
-        let search_tx_clone: mpsc::Sender<String> = search_tx.clone();
+        let search_tx_clone = search_tx.clone();
         entry.connect_changed(move |entry| {
             let text = entry.text().to_string();
-            let _ = search_tx_clone.try_send(text);
+            let _ = search_tx_clone.send(text);
         });
 
         // Close on escape
@@ -183,7 +200,7 @@ fn main() -> Result<()> {
         });
 
         // Trigger initial empty search
-        let _ = search_tx.try_send(String::new());
+        let _ = search_tx.send(String::new());
 
         window.present();
     });
@@ -255,11 +272,14 @@ fn reveal_in_file_manager(path: &str) -> Result<()> {
     let absolute_path = if path.starts_with('/') {
         path.to_string()
     } else {
-        std::env::current_dir()?.join(path).to_string_lossy().to_string()
+        std::env::current_dir()?
+            .join(path)
+            .to_string_lossy()
+            .to_string()
     };
-    
+
     let uri = format!("file://{}", absolute_path);
-    
+
     let status = std::process::Command::new("dbus-send")
         .arg("--session")
         .arg("--dest=org.freedesktop.FileManager1")
@@ -280,6 +300,6 @@ fn reveal_in_file_manager(path: &str) -> Result<()> {
     if let Some(parent) = std::path::Path::new(path).parent() {
         open::that(parent)?;
     }
-    
+
     Ok(())
 }

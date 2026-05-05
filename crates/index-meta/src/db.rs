@@ -168,6 +168,22 @@ impl MetaStore {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn replace_chunks(&self, file_id: &str, chunks: &[String]) -> Result<Vec<i64>, MetaError> {
+        self.conn
+            .execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id])?;
+
+        let mut ids = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            self.conn.execute(
+                "INSERT INTO chunks (file_id, text) VALUES (?1, ?2)",
+                params![file_id, chunk],
+            )?;
+            ids.push(self.conn.last_insert_rowid());
+        }
+
+        Ok(ids)
+    }
+
     pub fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<i64>, MetaError> {
         let mut stmt = self
             .conn
@@ -178,6 +194,32 @@ impl MetaStore {
             ids.push(row.get(0)?);
         }
         Ok(ids)
+    }
+
+    pub fn list_chunks_after(
+        &self,
+        last_chunk_id: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, String)>, MetaError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text
+             FROM chunks
+             WHERE id > ?1
+             ORDER BY id
+             LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![last_chunk_id, limit as i64])?;
+        let mut chunks = Vec::new();
+        while let Some(row) = rows.next()? {
+            chunks.push((row.get(0)?, row.get(1)?));
+        }
+        Ok(chunks)
+    }
+
+    pub fn count_chunks(&self) -> Result<i64, MetaError> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+            .map_err(MetaError::from)
     }
 
     pub fn get_file_by_chunk_id(
@@ -236,5 +278,46 @@ mod tests {
             .upsert_root("/home/test")
             .expect("root should upsert successfully");
         assert!(root_id > 0);
+    }
+
+    #[test]
+    fn test_replace_chunks_rewrites_rows_for_file() {
+        let file = NamedTempFile::new().expect("temp db file should be created");
+        let store = MetaStore::open(file.path()).expect("meta store should open");
+        let doc_id = DocumentId::new();
+        let root_id = store
+            .upsert_root("/home/test")
+            .expect("root should upsert successfully");
+
+        store
+            .upsert_file(FileRecord {
+                id: &doc_id,
+                root_id,
+                canonical_path: "/home/test/a.txt",
+                file_name: "a.txt",
+                extension: Some("txt"),
+                size: 1,
+                modified_unix_seconds: 1,
+            })
+            .expect("file should upsert successfully");
+
+        let first = store
+            .replace_chunks(
+                &doc_id.0.to_string(),
+                &[String::from("one"), String::from("two")],
+            )
+            .expect("first replace should succeed");
+        assert_eq!(first.len(), 2);
+
+        let second = store
+            .replace_chunks(&doc_id.0.to_string(), &[String::from("updated")])
+            .expect("second replace should succeed");
+        assert_eq!(second.len(), 1);
+
+        let chunk_ids = store
+            .get_chunks_for_file(&doc_id.0.to_string())
+            .expect("chunk ids should load");
+        assert_eq!(chunk_ids, second);
+        assert_eq!(store.count_chunks().expect("chunk count should load"), 1);
     }
 }

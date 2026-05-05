@@ -25,13 +25,14 @@ pub struct VectorIndex<'a> {
 
 impl<'a> VectorIndex<'a> {
     pub fn new(dimension: usize, max_nb_connection: usize) -> Self {
-        let hnsw = Hnsw::new(
+        let mut hnsw = Hnsw::new(
             max_nb_connection,
             dimension,
-            100, // max_elements
-            16,  // ef_construction
+            1_000_000, // max_elements
+            16,        // ef_construction
             DistCosine,
         );
+        hnsw.set_searching_mode(true);
         Self {
             hnsw,
             deleted_ids: HashSet::new(),
@@ -47,9 +48,10 @@ impl<'a> VectorIndex<'a> {
         let reloader = Box::new(HnswIo::new(dir, basename));
         let reloader: &'static mut HnswIo = Box::leak(reloader);
 
-        let hnsw = reloader
+        let mut hnsw = reloader
             .load_hnsw::<f32, DistCosine>()
             .map_err(|e| VectorError::Hnsw(e.to_string()))?;
+        hnsw.set_searching_mode(true);
 
         let deleted_path = dir.join(format!("{}.deleted", basename));
         let deleted_ids = if deleted_path.exists() {
@@ -63,6 +65,19 @@ impl<'a> VectorIndex<'a> {
     }
 
     pub fn save(&self, dir: &Path, basename: &str) -> Result<(), VectorError> {
+        if self.point_count() == 0 {
+            for path in [
+                dir.join(format!("{}.hnsw.graph", basename)),
+                dir.join(format!("{}.hnsw.data", basename)),
+                dir.join(format!("{}.deleted", basename)),
+            ] {
+                if path.exists() {
+                    fs::remove_file(path)?;
+                }
+            }
+            return Ok(());
+        }
+
         self.hnsw
             .file_dump(dir, basename)
             .map_err(|e| VectorError::Hnsw(e.to_string()))?;
@@ -80,8 +95,15 @@ impl<'a> VectorIndex<'a> {
             self.deleted_ids.remove(id);
             data.push((vec, *id));
         }
+        self.hnsw.set_searching_mode(false);
         self.hnsw.parallel_insert(&data);
+        self.hnsw.set_searching_mode(true);
         Ok(())
+    }
+
+    #[must_use]
+    pub fn point_count(&self) -> usize {
+        self.hnsw.get_nb_point()
     }
 
     pub fn delete_chunks(&mut self, chunk_ids: &[usize]) -> Result<(), VectorError> {
@@ -111,5 +133,68 @@ impl<'a> VectorIndex<'a> {
             }
         }
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn upserted_points_are_searchable_and_persisted() {
+        let mut index = VectorIndex::new(3, 16);
+        index
+            .upsert_chunks(&[
+                (1, vec![1.0, 0.0, 0.0]),
+                (2, vec![0.0, 1.0, 0.0]),
+                (3, vec![0.0, 0.0, 1.0]),
+            ])
+            .expect("upsert should succeed");
+
+        assert_eq!(index.point_count(), 3);
+
+        let hits = index
+            .search(&[1.0, 0.0, 0.0], 1)
+            .expect("search should succeed");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0, 1);
+
+        let dir = tempdir().expect("temp dir should be created");
+        index.save(dir.path(), "test").expect("save should succeed");
+
+        let graph = dir.path().join("test.hnsw.graph");
+        let data = dir.path().join("test.hnsw.data");
+        assert!(graph.exists());
+        assert!(data.exists());
+
+        let loaded = VectorIndex::load(dir.path(), "test").expect("load should succeed");
+        assert_eq!(loaded.point_count(), 3);
+        let reloaded_hits = loaded
+            .search(&[1.0, 0.0, 0.0], 1)
+            .expect("search after reload should succeed");
+        assert_eq!(reloaded_hits.len(), 1);
+        assert_eq!(reloaded_hits[0].0, 1);
+    }
+
+    #[test]
+    fn saving_empty_index_cleans_previous_dump() {
+        let dir = tempdir().expect("temp dir should be created");
+        let mut populated = VectorIndex::new(3, 16);
+        populated
+            .upsert_chunks(&[(1, vec![1.0, 0.0, 0.0])])
+            .expect("upsert should succeed");
+        populated
+            .save(dir.path(), "test")
+            .expect("save should succeed");
+
+        let empty = VectorIndex::new(3, 16);
+        empty
+            .save(dir.path(), "test")
+            .expect("empty save should succeed");
+
+        assert!(!dir.path().join("test.hnsw.graph").exists());
+        assert!(!dir.path().join("test.hnsw.data").exists());
+        assert!(!dir.path().join("test.deleted").exists());
     }
 }
