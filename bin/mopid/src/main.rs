@@ -13,11 +13,13 @@ use mopi_index_vector::index::VectorIndex;
 use mopi_ipc::{
     PROTOCOL_VERSION, Request, RequestEnvelope, Response, ResponseEnvelope, read_frame, write_frame,
 };
-use mopi_types::{DaemonState, DaemonStats, DaemonStatus, DoctorCheck, DoctorReport, RootSummary};
+use mopi_types::{DaemonState, DaemonStats, DaemonStatus, DoctorCheck, DoctorReport, QueryId, RootSummary};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{RwLock, mpsc};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 struct SharedState {
@@ -34,6 +36,7 @@ struct SharedState {
     dispatcher: Dispatcher,
     change_tx: mpsc::Sender<Vec<ChangeEvent>>,
     watch_control_tx: mpsc::Sender<WatchCommand>,
+    active_searches: Mutex<HashMap<QueryId, CancellationToken>>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +91,7 @@ async fn main() -> Result<()> {
         dispatcher: Dispatcher::new(),
         change_tx: tx.clone(),
         watch_control_tx: watch_control_tx.clone(),
+        active_searches: Mutex::new(HashMap::new()),
     });
 
     let server_state = Arc::clone(&state);
@@ -155,14 +159,8 @@ async fn main() -> Result<()> {
 
     info!(config_root = %paths.config_dir, runtime_dir = %paths.runtime_dir, data_dir = %paths.data_dir, cache_dir = %paths.cache_dir, "starting mopid");
 
-    loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                info!("received shutdown signal");
-                break;
-            }
-        }
-    }
+    tokio::signal::ctrl_c().await?;
+    info!("received shutdown signal");
 
     if socket_path.exists() {
         std::fs::remove_file(&socket_path)?;
@@ -207,25 +205,208 @@ async fn handle_client(mut stream: UnixStream, status: SharedStatus) -> Result<(
             }
         };
 
-        let response = dispatch_request(envelope, &status).await;
+        if envelope.protocol_version != PROTOCOL_VERSION {
+            write_frame(
+                &mut stream,
+                &ResponseEnvelope::new(Response::Error {
+                    message: format!(
+                        "protocol mismatch: client={}, daemon={}",
+                        envelope.protocol_version, PROTOCOL_VERSION
+                    ),
+                }),
+            )
+            .await?;
+            continue;
+        }
 
-        write_frame(&mut stream, &ResponseEnvelope::new(response)).await?;
+        match envelope.request {
+            Request::Search { query_id, query } => {
+                handle_streaming_search(&mut stream, &status, query_id, query).await?;
+            }
+            Request::CancelSearch { query_id } => {
+                let cancelled = {
+                    if let Ok(mut searches) = status.active_searches.lock() {
+                        searches.remove(&query_id)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(token) = cancelled {
+                    token.cancel();
+                    write_frame(
+                        &mut stream,
+                        &ResponseEnvelope::new(Response::Ack {
+                            message: format!("cancelled search {}", query_id.0),
+                        }),
+                    )
+                    .await?;
+                } else {
+                    write_frame(
+                        &mut stream,
+                        &ResponseEnvelope::new(Response::Error {
+                            message: format!("search {} not found or already completed", query_id.0),
+                        }),
+                    )
+                    .await?;
+                }
+            }
+            request => {
+                let response = dispatch_simple_request(request, &status).await;
+                write_frame(&mut stream, &ResponseEnvelope::new(response)).await?;
+            }
+        }
     }
+}
+
+async fn handle_streaming_search(
+    stream: &mut UnixStream,
+    state: &SharedStatus,
+    query_id: QueryId,
+    query: mopi_types::SearchQuery,
+) -> Result<()> {
+    state.search_requests.fetch_add(1, Ordering::Relaxed);
+
+    let cancel_token = CancellationToken::new();
+    {
+        if let Ok(mut searches) = state.active_searches.lock() {
+            searches.insert(query_id, cancel_token.clone());
+        }
+    }
+
+    let result = run_streaming_search(stream, state, query_id, query, &cancel_token).await;
+
+    {
+        if let Ok(mut searches) = state.active_searches.lock() {
+            searches.remove(&query_id);
+        }
+    }
+
+    result
+}
+
+async fn run_streaming_search(
+    stream: &mut UnixStream,
+    state: &SharedStatus,
+    query_id: QueryId,
+    query: mopi_types::SearchQuery,
+    cancel_token: &CancellationToken,
+) -> Result<()> {
+    let mut lex_query = query.clone();
+    lex_query.limit *= 2;
+
+    let lexical_results = match state.lexical.lock() {
+        Ok(lexical) => match lexical.search(&lex_query) {
+            Ok(results) => {
+                let mut search_results = Vec::new();
+                for result in results {
+                    if let Ok(id_uuid) = uuid::Uuid::parse_str(&result.id) {
+                        let doc_id = mopi_types::DocumentId(id_uuid);
+                        search_results.push(mopi_types::SearchResult {
+                            document_id: doc_id,
+                            path: camino::Utf8PathBuf::from(result.path),
+                            title: result.filename,
+                            snippet: result.snippet,
+                            score: result.score,
+                            reasons: vec![mopi_types::MatchReason::Content],
+                        });
+                    }
+                }
+                search_results
+            }
+            Err(e) => {
+                warn!("lexical search failed: {}", e);
+                Vec::new()
+            }
+        },
+        Err(_) => {
+            warn!("lexical store mutex poisoned");
+            Vec::new()
+        }
+    };
+
+    if !lexical_results.is_empty() {
+        write_frame(
+            stream,
+            &ResponseEnvelope::new(Response::SearchResultChunk {
+                query_id,
+                results: lexical_results.clone(),
+                is_final: false,
+            }),
+        )
+        .await?;
+    }
+
+    if cancel_token.is_cancelled() {
+        write_frame(
+            stream,
+            &ResponseEnvelope::new(Response::SearchResultChunk {
+                query_id,
+                results: Vec::new(),
+                is_final: true,
+            }),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let mut semantic_results = Vec::new();
+    if let Ok(mut embedder_guard) = state.embedder.lock() {
+        if let Some(embedder) = embedder_guard.as_mut() {
+            if let Ok(query_vector) = embedder.embed_query(&query.raw) {
+                if let Ok(vector) = state.vector.lock() {
+                    if let Some(v) = vector.as_ref() {
+                        if let Ok(neighbors) = v.search(&query_vector, query.limit * 2) {
+                            if let Ok(meta) = state.meta.lock() {
+                                for (chunk_id, score) in neighbors {
+                                    if let Ok(Some(file_record)) =
+                                        meta.get_file_by_chunk_id(chunk_id as i64)
+                                    {
+                                        let snippet = meta
+                                            .get_chunk_text(chunk_id as i64)
+                                            .unwrap_or_default()
+                                            .unwrap_or_else(|| String::from("..."));
+                                        if let Ok(id_uuid) =
+                                            uuid::Uuid::parse_str(&file_record.id)
+                                        {
+                                            semantic_results.push(mopi_types::SearchResult {
+                                                document_id: mopi_types::DocumentId(id_uuid),
+                                                path: camino::Utf8PathBuf::from(
+                                                    &file_record.canonical_path,
+                                                ),
+                                                title: file_record.file_name.clone(),
+                                                snippet,
+                                                score,
+                                                reasons: vec![mopi_types::MatchReason::Semantic],
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let combined =
+        mopi_rank::combine_and_rank(lexical_results, semantic_results, query.limit);
+
+    write_frame(
+        stream,
+        &ResponseEnvelope::new(Response::SearchResultChunk {
+            query_id,
+            results: combined,
+            is_final: true,
+        }),
+    )
+    .await
 }
 
 type SharedStatus = Arc<SharedState>;
 
-async fn dispatch_request(envelope: RequestEnvelope, state: &SharedStatus) -> Response {
-    if envelope.protocol_version != PROTOCOL_VERSION {
-        return Response::Error {
-            message: format!(
-                "protocol mismatch: client={}, daemon={}",
-                envelope.protocol_version, PROTOCOL_VERSION
-            ),
-        };
-    }
-
-    match envelope.request {
+async fn dispatch_simple_request(request: Request, state: &SharedStatus) -> Response {
+    match request {
         Request::Ping => Response::Pong {
             protocol_version: PROTOCOL_VERSION,
         },
@@ -281,96 +462,9 @@ async fn dispatch_request(envelope: RequestEnvelope, state: &SharedStatus) -> Re
             },
         },
         Request::Doctor => Response::Doctor(build_doctor_report(state).await),
-        Request::Search { query_id, query } => {
-            state.search_requests.fetch_add(1, Ordering::Relaxed);
-            let lexical_results = match state.lexical.lock() {
-                Ok(lexical) => {
-                    let mut lex_query = query.clone();
-                    lex_query.limit *= 2;
-                    match lexical.search(&lex_query) {
-                        Ok(results) => {
-                            let mut search_results = Vec::new();
-                            for result in results {
-                                if let Ok(id_uuid) = uuid::Uuid::parse_str(&result.id) {
-                                    let doc_id = mopi_types::DocumentId(id_uuid);
-                                    search_results.push(mopi_types::SearchResult {
-                                        document_id: doc_id,
-                                        path: camino::Utf8PathBuf::from(result.path),
-                                        title: result.filename,
-                                        snippet: result.snippet,
-                                        score: result.score,
-                                        reasons: vec![mopi_types::MatchReason::Content],
-                                    });
-                                }
-                            }
-                            search_results
-                        }
-                        Err(e) => {
-                            warn!("lexical search failed: {}", e);
-                            Vec::new()
-                        }
-                    }
-                }
-                Err(_) => {
-                    warn!("lexical store mutex poisoned");
-                    Vec::new()
-                }
-            };
-
-            let mut semantic_results = Vec::new();
-            if let Ok(mut embedder_guard) = state.embedder.lock() {
-                if let Some(embedder) = embedder_guard.as_mut() {
-                    if let Ok(query_vector) = embedder.embed_query(&query.raw) {
-                        if let Ok(vector) = state.vector.lock() {
-                            if let Some(v) = vector.as_ref() {
-                                if let Ok(neighbors) = v.search(&query_vector, query.limit * 2) {
-                                    if let Ok(meta) = state.meta.lock() {
-                                        for (chunk_id, score) in neighbors {
-                                            if let Ok(Some(file_record)) =
-                                                meta.get_file_by_chunk_id(chunk_id as i64)
-                                            {
-                                                let snippet = meta
-                                                    .get_chunk_text(chunk_id as i64)
-                                                    .unwrap_or_default()
-                                                    .unwrap_or_else(|| String::from("..."));
-                                                if let Ok(id_uuid) =
-                                                    uuid::Uuid::parse_str(&file_record.id)
-                                                {
-                                                    semantic_results.push(
-                                                        mopi_types::SearchResult {
-                                                            document_id: mopi_types::DocumentId(
-                                                                id_uuid,
-                                                            ),
-                                                            path: camino::Utf8PathBuf::from(
-                                                                &file_record.canonical_path,
-                                                            ),
-                                                            title: file_record.file_name.clone(),
-                                                            snippet,
-                                                            score,
-                                                            reasons: vec![
-                                                                mopi_types::MatchReason::Semantic,
-                                                            ],
-                                                        },
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let combined =
-                mopi_rank::combine_and_rank(lexical_results, semantic_results, query.limit);
-
-            Response::SearchResults {
-                query_id,
-                results: combined,
-            }
-        }
+        Request::Search { .. } | Request::CancelSearch { .. } => Response::Error {
+            message: String::from("search requests should be handled via streaming path"),
+        },
     }
 }
 
@@ -544,7 +638,7 @@ async fn process_change_event(state: &SharedStatus, event: mopi_crawl::ChangeEve
                                             }
                                             info!(path = %candidate.canonical_path, "embeddings generated");
                                             for (chunk_id, embedding) in
-                                                sqlite_chunk_ids.iter().zip(embeddings.into_iter())
+                                                sqlite_chunk_ids.iter().zip(embeddings)
                                             {
                                                 chunk_data.push((*chunk_id as usize, embedding));
                                             }
@@ -700,7 +794,7 @@ async fn recover_empty_vector_index(state: &SharedStatus) -> Result<()> {
 
         let chunk_vectors: Vec<(usize, Vec<f32>)> = chunk_batch
             .iter()
-            .zip(embeddings.into_iter())
+            .zip(embeddings)
             .map(|((chunk_id, _), embedding)| (*chunk_id as usize, embedding))
             .collect();
 

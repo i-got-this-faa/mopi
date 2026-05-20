@@ -14,6 +14,7 @@ mopi-index-meta = { path = "../../crates/index-meta" }
 mopi-ipc = { path = "../../crates/ipc" }
 mopi-types = { path = "../../crates/types" }
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 camino.workspace = true
 uuid.workspace = true

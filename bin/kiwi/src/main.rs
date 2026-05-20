@@ -51,6 +51,8 @@ fn main() -> Result<()> {
                 }
             };
 
+            let mut last_query_id: Option<QueryId> = None;
+
             loop {
                 tokio::select! {
                     changed = search_rx.changed() => {
@@ -69,7 +71,15 @@ fn main() -> Result<()> {
                     next_query = search_rx.borrow().clone();
                 }
 
+                // Cancel previous search if still active
+                if let Some(prev_id) = last_query_id.take() {
+                    let cancel_req = Request::CancelSearch { query_id: prev_id };
+                    let _ = write_frame(&mut stream, &RequestEnvelope::new(cancel_req)).await;
+                }
+
                 let current_query_id = QueryId::new();
+                last_query_id = Some(current_query_id);
+
                 let query = mopi_query::parse_query(next_query.clone());
                 let req = Request::Search {
                     query_id: current_query_id,
@@ -83,6 +93,14 @@ fn main() -> Result<()> {
                 loop {
                     match read_frame::<ResponseEnvelope>(&mut stream).await {
                         Ok(env) => match env.response {
+                            Response::SearchResultChunk { query_id, results, is_final } => {
+                                if query_id == current_query_id {
+                                    let _ = gui_tx.try_send(GuiEvent::ResultsUpdated(results));
+                                    if is_final {
+                                        break;
+                                    }
+                                }
+                            }
                             Response::SearchResults { query_id, results } => {
                                 if query_id == current_query_id {
                                     let _ = gui_tx.try_send(GuiEvent::ResultsUpdated(results));
@@ -266,40 +284,4 @@ fn create_result_row(result: &SearchResult) -> Box {
     row.append(&snippet);
 
     row
-}
-
-fn reveal_in_file_manager(path: &str) -> Result<()> {
-    let absolute_path = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        std::env::current_dir()?
-            .join(path)
-            .to_string_lossy()
-            .to_string()
-    };
-
-    let uri = format!("file://{}", absolute_path);
-
-    let status = std::process::Command::new("dbus-send")
-        .arg("--session")
-        .arg("--dest=org.freedesktop.FileManager1")
-        .arg("--type=method_call")
-        .arg("/org/freedesktop/FileManager1")
-        .arg("org.freedesktop.FileManager1.ShowItems")
-        .arg(format!("array:string:{}", uri))
-        .arg("string:")
-        .status();
-
-    if let Ok(st) = status {
-        if st.success() {
-            return Ok(());
-        }
-    }
-
-    // Fallback: open parent directory
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        open::that(parent)?;
-    }
-
-    Ok(())
 }

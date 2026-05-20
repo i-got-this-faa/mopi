@@ -189,3 +189,221 @@ pub struct LexicalSearchResult {
     pub snippet: String,
     pub score: f32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mopi_types::SearchQuery;
+    use tempfile::tempdir;
+
+    fn open_test_store() -> (tempfile::TempDir, LexicalStore) {
+        let dir = tempdir().expect("temp dir should exist");
+        let store = LexicalStore::open(dir.path().try_into().expect("utf8 path")).expect("store should open");
+        (dir, store)
+    }
+
+    #[test]
+    fn add_and_search_by_content() {
+        let (_dir, mut store) = open_test_store();
+        store
+            .add_document("doc1", "/test/file.txt", &[], "file.txt", "hello world from mopi", Some("txt"), Some("text/plain"))
+            .expect("add should succeed");
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "mopi".into(),
+            terms: "mopi".into(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "doc1");
+    }
+
+    #[test]
+    fn add_and_search_by_filename() {
+        let (_dir, mut store) = open_test_store();
+        store
+            .add_document("doc1", "/test/main.rs", &[], "main.rs", "fn main() {}", Some("rs"), Some("text/rust"))
+            .expect("add should succeed");
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "main".into(),
+            terms: "main".into(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert!(!results.is_empty());
+        assert_eq!(results[0].filename, "main.rs");
+    }
+
+    #[test]
+    fn delete_document_removes_from_search() {
+        let (_dir, mut store) = open_test_store();
+        store
+            .add_document("doc1", "/test/file.txt", &[], "file.txt", "searchable content", Some("txt"), None)
+            .expect("add should succeed");
+        store.commit().expect("commit should succeed");
+
+        store.delete_document("doc1").expect("delete should succeed");
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "searchable".into(),
+            terms: "searchable".into(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn filetype_filter_boosts_results() {
+        let (_dir, mut store) = open_test_store();
+        store
+            .add_document("doc1", "/test/a.rs", &[], "a.rs", "hello world", Some("rs"), None)
+            .expect("add should succeed");
+        store
+            .add_document("doc2", "/test/b.txt", &[], "b.txt", "hello world", Some("txt"), None)
+            .expect("add should succeed");
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "hello".into(),
+            terms: "hello".into(),
+            limit: 10,
+            filetype_filters: vec!["rs".into()],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "doc1");
+    }
+
+    #[test]
+    fn name_filter_boosts_results() {
+        let (_dir, mut store) = open_test_store();
+        store
+            .add_document("doc1", "/test/main.rs", &[], "main.rs", "content a", Some("rs"), None)
+            .expect("add should succeed");
+        store
+            .add_document("doc2", "/test/util.rs", &[], "util.rs", "content a", Some("rs"), None)
+            .expect("add should succeed");
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "content".into(),
+            terms: "content".into(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec!["main".into()],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "doc1");
+    }
+
+    #[test]
+    fn empty_query_returns_no_results() {
+        let (_dir, store) = open_test_store();
+        let query = SearchQuery {
+            raw: String::new(),
+            terms: String::new(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_on_empty_index_returns_no_results() {
+        let (_dir, store) = open_test_store();
+        let query = SearchQuery {
+            raw: "anything".into(),
+            terms: "anything".into(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn snippet_contains_matched_terms() {
+        let (_dir, mut store) = open_test_store();
+        store
+            .add_document("doc1", "/test/file.txt", &[], "file.txt", "the quick brown fox jumps over the lazy dog", Some("txt"), None)
+            .expect("add should succeed");
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "fox".into(),
+            terms: "fox".into(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("fox"));
+    }
+
+    #[test]
+    fn alias_paths_are_indexed() {
+        let (_dir, mut store) = open_test_store();
+        store
+            .add_document("doc1", "/real/file.txt", &["/link/file.txt"], "file.txt", "content", Some("txt"), None)
+            .expect("add should succeed");
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "content".into(),
+            terms: "content".into(),
+            limit: 10,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "doc1");
+    }
+
+    #[test]
+    fn limit_truncates_results() {
+        let (_dir, mut store) = open_test_store();
+        for i in 0..5 {
+            store
+                .add_document(
+                    &format!("doc{i}"),
+                    &format!("/test/file{i}.txt"),
+                    &[],
+                    &format!("file{i}.txt"),
+                    "searchable content here",
+                    Some("txt"),
+                    None,
+                )
+                .expect("add should succeed");
+        }
+        store.commit().expect("commit should succeed");
+
+        let query = SearchQuery {
+            raw: "searchable".into(),
+            terms: "searchable".into(),
+            limit: 2,
+            filetype_filters: vec![],
+            name_filters: vec![],
+        };
+        let results = store.search(&query).expect("search should succeed");
+        assert_eq!(results.len(), 2);
+    }
+}

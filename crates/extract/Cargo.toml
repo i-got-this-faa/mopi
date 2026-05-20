@@ -6,8 +6,6 @@ license.workspace = true
 
 [dependencies]
 camino.workspace = true
-chrono = "0.4.44"
-infer = "0.16.0"
 lopdf = "0.34.0"
 mime_guess = "2.0.5"
 mopi-config = { path = "../config" }

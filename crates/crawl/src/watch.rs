@@ -80,20 +80,15 @@ fn has_relevant_event(
             };
 
             // Find which root this belongs to
-            let root_match = config.roots.iter().enumerate().find_map(|(id, root)| {
+            let relative_path = config.roots.iter().find_map(|root| {
                 utf8_path
                     .strip_prefix(&root.path)
                     .ok()
-                    .map(|rel| (id, root, rel))
             });
 
-            let (root_id, root, relative_path) = match root_match {
-                Some(m) => m,
-                None => continue,
+            let Some(relative_path) = relative_path else {
+                continue;
             };
-
-            let _ = root_id;
-            let _ = root;
 
             if !matcher.allows(relative_path) {
                 continue;
