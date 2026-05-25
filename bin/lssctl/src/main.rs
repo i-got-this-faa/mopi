@@ -78,6 +78,10 @@ async fn main() -> Result<()> {
             let response = send_request(&paths, Request::RefreshChanged).await?;
             print_response(response);
         }
+        Some("failures") => {
+            let response = send_request(&paths, Request::GetFailures { limit: 50 }).await?;
+            print_response(response);
+        }
         Some("doctor") => {
             let response = send_request(&paths, Request::Doctor).await?;
             print_response(response);
@@ -112,7 +116,7 @@ async fn send_request(paths: &LssPaths, request: Request) -> Result<Response> {
 
 fn print_usage(paths: &LssPaths) {
     println!(
-        "usage: lssctl <init-config|config show|config validate|ping|status|stats|roots|reload-config|refresh|doctor|search ...>\nconfig={}\nsocket={}",
+        "usage: lssctl <init-config|config show|config validate|ping|status|stats|roots|reload-config|refresh|failures|doctor|search ...>\nconfig={}\nsocket={}",
         paths.config_file,
         paths.socket_file()
     );

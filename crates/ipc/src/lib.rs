@@ -1,5 +1,6 @@
 use lss_types::{
-    DaemonStats, DaemonStatus, DoctorReport, QueryId, RootSummary, SearchQuery, SearchResult,
+    DaemonStats, DaemonStatus, DoctorReport, FailureRecord, QueryId, RootSummary, SearchQuery,
+    SearchResult,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -48,6 +49,9 @@ pub enum Request {
     ReloadConfig,
     RefreshChanged,
     Doctor,
+    GetFailures {
+        limit: usize,
+    },
     Search {
         query_id: QueryId,
         query: SearchQuery,
@@ -69,6 +73,7 @@ pub enum Response {
         message: String,
     },
     Doctor(DoctorReport),
+    ListFailures(Vec<FailureRecord>),
     Error {
         message: String,
     },

@@ -1,6 +1,7 @@
 pub mod db;
 
-pub use db::{FileRecord, MetaError, MetaStore};
+pub use db::{FileRecord, FileRecordOwned, JobRecord, JournalEntry, MetaError, MetaStore};
+pub use lss_types::FailureRecord;
 use lss_types::DocumentId;
 use serde::{Deserialize, Serialize};
 

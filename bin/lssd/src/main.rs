@@ -123,6 +123,12 @@ async fn main() -> Result<()> {
             warn!(error = %error, "failed to recover empty vector index");
         }
     }
+
+    // Recover from interrupted indexing (stale journal entries)
+    if let Err(error) = recover_stale_journals(&state).await {
+        warn!(error = %error, "failed to recover stale journals");
+    }
+
     state.status.write().await.state = DaemonState::Ready;
 
     // Start background indexing
@@ -461,6 +467,24 @@ async fn dispatch_simple_request(request: Request, state: &SharedStatus) -> Resp
                 message: error.to_string(),
             },
         },
+        Request::GetFailures { limit } => {
+            match state.meta.lock() {
+                Ok(meta) => match meta.get_failures(limit) {
+                    Ok(failures) => Response::ListFailures(
+                        failures.into_iter().map(|f| lss_types::FailureRecord {
+                            id: f.id,
+                            file_id: f.file_id,
+                            canonical_path: f.canonical_path,
+                            error_message: f.error_message,
+                            stage: f.stage,
+                            failed_at: f.failed_at,
+                        }).collect()
+                    ),
+                    Err(e) => Response::Error { message: e.to_string() },
+                },
+                Err(_) => Response::Error { message: String::from("meta store mutex poisoned") },
+            }
+        }
         Request::Doctor => Response::Doctor(build_doctor_report(state).await),
         Request::Search { .. } | Request::CancelSearch { .. } => Response::Error {
             message: String::from("search requests should be handled via streaming path"),
@@ -507,9 +531,27 @@ async fn run_indexer(state: SharedStatus, mut rx: mpsc::Receiver<Vec<lss_crawl::
 }
 
 async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEvent) -> Result<()> {
+    let result = process_change_event_inner(state, &event).await;
+    if let Err(ref error) = result {
+        warn!(kind = ?event.kind, path = %event.canonical_path, error = %error, "change event failed");
+        // Clean up any stale journal entry and record the failure
+        if let Ok(meta) = state.meta.lock() {
+            let path_str = event.canonical_path.as_str();
+            if let Ok(Some(id_str)) = meta.get_file_by_canonical_path(path_str) {
+                let _ = meta.record_failure(&id_str, path_str, &error.to_string(), "indexing");
+            }
+        }
+    }
+    result
+}
+
+async fn process_change_event_inner(
+    state: &SharedStatus,
+    event: &lss_crawl::ChangeEvent,
+) -> Result<()> {
     match event.kind {
         ChangeKind::Added | ChangeKind::Modified => {
-            if let Some(candidate) = event.candidate {
+            if let Some(candidate) = &event.candidate {
                 info!(path = %candidate.canonical_path, "processing add/modify");
                 let config = state.config.read().await.extraction.clone();
                 let root_path = state
@@ -520,6 +562,9 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                     .get(candidate.root_id)
                     .map(|root| root.path.clone())
                     .ok_or_else(|| anyhow!("invalid crawl root id {}", candidate.root_id))?;
+
+                let journal_id: Option<i64>;
+
                 match state.dispatcher.extract(&candidate.canonical_path, &config) {
                     Ok(output) => {
                         info!(path = %candidate.canonical_path, "extraction successful");
@@ -534,11 +579,21 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                             )?),
                             None => lss_types::DocumentId::new(),
                         };
+                        let doc_id_str = doc_id.0.to_string();
                         let root_id = state
                             .meta
                             .lock()
                             .map_err(|_| anyhow!("meta store mutex poisoned"))?
                             .upsert_root(root_path.as_str())?;
+
+                        // Create journal entry
+                        journal_id = Some(
+                            state
+                                .meta
+                                .lock()
+                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                                .create_journal_entry(&doc_id_str, candidate.canonical_path.as_str())?,
+                        );
 
                         if let Some(id) = existing_id.as_deref() {
                             state
@@ -576,12 +631,20 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                                 modified_unix_seconds: candidate.modified_unix_seconds,
                             })?;
 
+                        if let Some(jid) = journal_id {
+                            state
+                                .meta
+                                .lock()
+                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                                .advance_journal_stage(jid, "lexical")?;
+                        }
+
                         for alias in &candidate.alias_paths {
                             state
                                 .meta
                                 .lock()
                                 .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                                .upsert_alias(&doc_id.0.to_string(), alias.as_str())?;
+                                .upsert_alias(&doc_id_str, alias.as_str())?;
                         }
 
                         let alias_slices: Vec<&str> =
@@ -592,7 +655,7 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                             .lock()
                             .map_err(|_| anyhow!("lexical store mutex poisoned"))?
                             .add_document(
-                                &doc_id.0.to_string(),
+                                &doc_id_str,
                                 candidate.canonical_path.as_str(),
                                 &alias_slices,
                                 &candidate.file_name,
@@ -600,6 +663,14 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                                 candidate.extension.as_deref(),
                                 Some(&output.mime),
                             )?;
+
+                        if let Some(jid) = journal_id {
+                            state
+                                .meta
+                                .lock()
+                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                                .advance_journal_stage(jid, "vector")?;
+                        }
 
                         let chunker = Chunker::default();
                         let chunks = chunker.chunk(&output.text);
@@ -612,12 +683,12 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                             .meta
                             .lock()
                             .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                            .replace_chunks(&doc_id.0.to_string(), &chunk_texts)?;
+                            .replace_chunks(&doc_id_str, &chunk_texts)?;
                         state
                             .meta
                             .lock()
                             .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                            .set_extractor_status(&doc_id.0.to_string(), "done")?;
+                            .set_extractor_status(&doc_id_str, "done")?;
                         info!(path = %candidate.canonical_path, "chunks stored in metadata db");
 
                         match state.embedder.lock() {
@@ -637,6 +708,15 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                                                 );
                                             }
                                             info!(path = %candidate.canonical_path, "embeddings generated");
+
+                                            // Persist embeddings to SQLite for crash recovery
+                                            if let Ok(meta) = state.meta.lock() {
+                                                let _ = meta.store_chunk_embeddings(
+                                                    &sqlite_chunk_ids,
+                                                    &embeddings,
+                                                );
+                                            }
+
                                             for (chunk_id, embedding) in
                                                 sqlite_chunk_ids.iter().zip(embeddings)
                                             {
@@ -668,6 +748,18 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                             }
                         }
 
+                        // Update ingest tracking
+                        if let Ok(meta) = state.meta.lock() {
+                            let _ = meta.update_ingest_time(&doc_id_str);
+                        }
+
+                        // Complete journal (deletes the entry)
+                        if let Some(jid) = journal_id {
+                            if let Ok(meta) = state.meta.lock() {
+                                let _ = meta.complete_journal_entry(jid);
+                            }
+                        }
+
                         update_snapshot_for_event(
                             state,
                             ChangeEvent {
@@ -683,7 +775,10 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                         }
                     }
                     Err(e) => {
-                        warn!(path = %candidate.canonical_path, error = %e, "extraction failed")
+                        warn!(path = %candidate.canonical_path, error = %e, "extraction failed");
+                        if let Ok(meta) = state.meta.lock() {
+                            let _ = meta.record_failure("unknown", candidate.canonical_path.as_str(), &e.to_string(), "extract");
+                        }
                     }
                 }
             }
@@ -695,11 +790,27 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                 .map_err(|_| anyhow!("meta store mutex poisoned"))?
                 .get_file_by_canonical_path(event.canonical_path.as_str())?;
             if let Some(id_str) = id_opt {
+                // Journal the deletion for crash recovery
+                let journal_id = state
+                    .meta
+                    .lock()
+                    .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                    .create_journal_entry(&id_str, event.canonical_path.as_str())
+                    .ok();
+
                 state
                     .lexical
                     .lock()
                     .map_err(|_| anyhow!("lexical store mutex poisoned"))?
                     .delete_document(&id_str)?;
+
+                if let Some(jid) = journal_id {
+                    let _ = state
+                        .meta
+                        .lock()
+                        .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                        .advance_journal_stage(jid, "lexical");
+                }
 
                 {
                     let meta = state
@@ -717,6 +828,15 @@ async fn process_change_event(state: &SharedStatus, event: lss_crawl::ChangeEven
                     }
                     meta.delete_file(&id_str)?;
                 }
+
+                if let Some(jid) = journal_id {
+                    let _ = state
+                        .meta
+                        .lock()
+                        .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                        .complete_journal_entry(jid);
+                }
+
                 update_snapshot_for_event(state, event.clone()).await;
                 let mut status = state.status.write().await;
                 status.indexed_documents = status.indexed_documents.saturating_sub(1);
@@ -766,37 +886,51 @@ async fn recover_empty_vector_index(state: &SharedStatus) -> Result<()> {
             .meta
             .lock()
             .map_err(|_| anyhow!("meta store mutex poisoned"))?
-            .list_chunks_after(last_chunk_id, batch_size)?;
+            .get_chunks_with_embeddings_after(last_chunk_id, batch_size)?;
         if chunk_batch.is_empty() {
             break;
         }
 
-        let embeddings = {
-            let mut embedder_guard = state
-                .embedder
-                .lock()
-                .map_err(|_| anyhow!("embedder mutex poisoned"))?;
-            let embedder = embedder_guard
-                .as_mut()
-                .ok_or_else(|| anyhow!("embedder not available for vector recovery"))?;
-            let text_slices: Vec<&str> =
-                chunk_batch.iter().map(|(_, text)| text.as_str()).collect();
-            embedder.embed_chunks(&text_slices)?
+        // Prefer stored embeddings; re-embed only for chunks missing them
+        let chunk_vectors: Vec<(usize, Vec<f32>)> = {
+            let mut to_embed = Vec::new();
+            let mut to_embed_indices = Vec::new();
+            let mut result = Vec::with_capacity(chunk_batch.len());
+
+            for (chunk_id, text, stored_emb) in &chunk_batch {
+                if let Some(emb) = stored_emb {
+                    result.push((*chunk_id as usize, emb.clone()));
+                } else {
+                    to_embed.push(text.as_str());
+                    to_embed_indices.push(*chunk_id);
+                }
+            }
+
+            if !to_embed.is_empty() {
+                let mut embedder_guard = state
+                    .embedder
+                    .lock()
+                    .map_err(|_| anyhow!("embedder mutex poisoned"))?;
+                let embedder = embedder_guard
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("embedder not available for vector recovery"))?;
+                let new_embeddings = embedder.embed_chunks(&to_embed)?;
+
+                if new_embeddings.len() != to_embed_indices.len() {
+                    return Err(anyhow!(
+                        "embedding batch size mismatch during vector recovery: expected {}, got {}",
+                        to_embed_indices.len(),
+                        new_embeddings.len()
+                    ));
+                }
+
+                for (chunk_id, emb) in to_embed_indices.into_iter().zip(new_embeddings) {
+                    result.push((chunk_id as usize, emb));
+                }
+            }
+
+            result
         };
-
-        if embeddings.len() != chunk_batch.len() {
-            return Err(anyhow!(
-                "embedding batch size mismatch during vector recovery: expected {}, got {}",
-                chunk_batch.len(),
-                embeddings.len()
-            ));
-        }
-
-        let chunk_vectors: Vec<(usize, Vec<f32>)> = chunk_batch
-            .iter()
-            .zip(embeddings)
-            .map(|((chunk_id, _), embedding)| (*chunk_id as usize, embedding))
-            .collect();
 
         if let Ok(mut vector) = state.vector.lock() {
             if let Some(index) = vector.as_mut() {
@@ -806,7 +940,7 @@ async fn recover_empty_vector_index(state: &SharedStatus) -> Result<()> {
 
         last_chunk_id = chunk_batch
             .last()
-            .map(|(chunk_id, _)| *chunk_id)
+            .map(|(chunk_id, _, _)| *chunk_id)
             .unwrap_or(last_chunk_id);
     }
 
@@ -817,6 +951,91 @@ async fn recover_empty_vector_index(state: &SharedStatus) -> Result<()> {
             info!(
                 point_count = index.point_count(),
                 "vector recovery complete"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn recover_stale_journals(state: &SharedStatus) -> Result<()> {
+    let stale_entries = state
+        .meta
+        .lock()
+        .map_err(|_| anyhow!("meta store mutex poisoned"))?
+        .get_stale_journal_entries()?;
+
+    if stale_entries.is_empty() {
+        return Ok(());
+    }
+
+    info!(count = stale_entries.len(), "recovering stale journal entries");
+
+    for entry in &stale_entries {
+        info!(
+            file_id = %entry.file_id,
+            path = %entry.canonical_path,
+            stage = %entry.stage,
+            "re-processing interrupted file"
+        );
+
+        let path = std::path::Path::new(&entry.canonical_path);
+        let metadata = match path.metadata() {
+            Ok(m) => m,
+            Err(_) => {
+                warn!(path = %entry.canonical_path, "file no longer exists, cleaning up journal entry");
+                if let Ok(meta) = state.meta.lock() {
+                    let _ = meta.complete_journal_entry(entry.id);
+                }
+                continue;
+            }
+        };
+
+        let canonical_path = path
+            .canonicalize()
+            .ok()
+            .and_then(|p| {
+                camino::Utf8PathBuf::try_from(p)
+                    .ok()
+            })
+            .unwrap_or_else(|| camino::Utf8PathBuf::from(&entry.canonical_path));
+
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| String::from("unknown"));
+
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let candidate = lss_crawl::CrawlCandidate {
+            root_id: 0,
+            observed_path: canonical_path.clone(),
+            canonical_path,
+            alias_paths: Vec::new(),
+            file_name,
+            extension: path.extension().map(|e| e.to_string_lossy().to_string()),
+            file_size: metadata.len(),
+            modified_unix_seconds: modified,
+            hidden: false,
+            is_alias: false,
+        };
+
+        let event = lss_crawl::ChangeEvent {
+            kind: lss_crawl::ChangeKind::Modified,
+            canonical_path: candidate.canonical_path.clone(),
+            candidate: Some(candidate),
+        };
+
+        if let Err(e) = process_change_event(state, event).await {
+            warn!(
+                file_id = %entry.file_id,
+                error = %e,
+                "failed to recover interrupted file"
             );
         }
     }

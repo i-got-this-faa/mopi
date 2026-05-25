@@ -30,6 +30,7 @@ pub mod provider {
 
     const MODEL_NAME: &str = "AllMiniLML6V2";
     const MODEL_CODE: &str = "Qdrant/all-MiniLM-L6-v2-onnx";
+    #[allow(dead_code)]
     const MODEL_DIMENSION: usize = 384;
     const MODEL_MAX_LENGTH: usize = 512;
     const DEFAULT_BATCH_SIZE: usize = 256;

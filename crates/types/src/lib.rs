@@ -128,6 +128,16 @@ pub struct DoctorCheck {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailureRecord {
+    pub id: i64,
+    pub file_id: String,
+    pub canonical_path: String,
+    pub error_message: String,
+    pub stage: String,
+    pub failed_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
