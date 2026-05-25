@@ -16,3 +16,6 @@
 # plans/
 
 .fastembed_cache/
+
+
+/__pycache__/
