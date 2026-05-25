@@ -1,0 +1,30 @@
+[package]
+name = "lssd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+lss-config = { path = "../../crates/config" }
+lss-crawl = { path = "../../crates/crawl" }
+lss-extract = { path = "../../crates/extract" }
+lss-index-lexical = { path = "../../crates/index-lexical" }
+lss-index-meta = { path = "../../crates/index-meta" }
+lss-ipc = { path = "../../crates/ipc" }
+lss-types = { path = "../../crates/types" }
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+camino.workspace = true
+uuid.workspace = true
+lss-embed = { version = "0.1.0", path = "../../crates/embed" }
+lss-index-vector = { version = "0.1.0", path = "../../crates/index-vector" }
+lss-chunking = { version = "0.1.0", path = "../../crates/chunking" }
+lss-rank = { version = "0.1.0", path = "../../crates/rank" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

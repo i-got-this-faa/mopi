@@ -1,5 +1,5 @@
 [package]
-name = "mopi-index-vector"
+name = "lss-index-vector"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

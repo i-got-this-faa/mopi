@@ -1925,23 +1925,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "kiwi"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "gtk4",
- "gtk4-layer-shell",
- "mopi-config",
- "mopi-ipc",
- "mopi-query",
- "mopi-types",
- "open",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "kqueue"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2087,6 +2070,211 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "lss-chunking"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "lss-config"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "directories",
+ "globset",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "lss-crawl"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "lss-config",
+ "notify",
+ "notify-debouncer-full",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "lss-embed"
+version = "0.1.0"
+dependencies = [
+ "hf-hub",
+ "lss-config",
+ "ndarray",
+ "ort",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tracing",
+]
+
+[[package]]
+name = "lss-extract"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "lopdf",
+ "lss-config",
+ "mime_guess",
+ "quick-xml",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "zip",
+]
+
+[[package]]
+name = "lss-index-lexical"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "lss-types",
+ "serde",
+ "tantivy",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "lss-index-meta"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "lss-config",
+ "lss-types",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "lss-index-vector"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "hnsw_rs",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "lss-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lss-types",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "lss-query"
+version = "0.1.0"
+dependencies = [
+ "lss-types",
+]
+
+[[package]]
+name = "lss-rank"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "lss-types",
+]
+
+[[package]]
+name = "lss-test-support"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "tempfile",
+]
+
+[[package]]
+name = "lss-types"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "serde",
+ "uuid",
+]
+
+[[package]]
+name = "lssctl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lss-config",
+ "lss-ipc",
+ "lss-query",
+ "lss-types",
+ "tokio",
+ "toml_edit",
+ "tracing",
+]
+
+[[package]]
+name = "lssd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "lss-chunking",
+ "lss-config",
+ "lss-crawl",
+ "lss-embed",
+ "lss-extract",
+ "lss-index-lexical",
+ "lss-index-meta",
+ "lss-index-vector",
+ "lss-ipc",
+ "lss-rank",
+ "lss-types",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "lssi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "gtk4",
+ "gtk4-layer-shell",
+ "lss-config",
+ "lss-ipc",
+ "lss-query",
+ "lss-types",
+ "open",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2270,194 +2458,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "mopi-chunking"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "mopi-config"
-version = "0.1.0"
-dependencies = [
- "camino",
- "directories",
- "globset",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "toml 0.9.12+spec-1.1.0",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "mopi-crawl"
-version = "0.1.0"
-dependencies = [
- "camino",
- "mopi-config",
- "notify",
- "notify-debouncer-full",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "walkdir",
-]
-
-[[package]]
-name = "mopi-embed"
-version = "0.1.0"
-dependencies = [
- "hf-hub",
- "mopi-config",
- "ndarray",
- "ort",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokenizers",
- "tracing",
-]
-
-[[package]]
-name = "mopi-extract"
-version = "0.1.0"
-dependencies = [
- "camino",
- "lopdf",
- "mime_guess",
- "mopi-config",
- "quick-xml",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "zip",
-]
-
-[[package]]
-name = "mopi-index-lexical"
-version = "0.1.0"
-dependencies = [
- "camino",
- "mopi-types",
- "serde",
- "tantivy",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "mopi-index-meta"
-version = "0.1.0"
-dependencies = [
- "camino",
- "mopi-config",
- "mopi-types",
- "rusqlite",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "mopi-index-vector"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "hnsw_rs",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "mopi-ipc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mopi-types",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "mopi-query"
-version = "0.1.0"
-dependencies = [
- "mopi-types",
-]
-
-[[package]]
-name = "mopi-rank"
-version = "0.1.0"
-dependencies = [
- "camino",
- "mopi-types",
-]
-
-[[package]]
-name = "mopi-test-support"
-version = "0.1.0"
-dependencies = [
- "camino",
- "tempfile",
-]
-
-[[package]]
-name = "mopi-types"
-version = "0.1.0"
-dependencies = [
- "camino",
- "serde",
- "uuid",
-]
-
-[[package]]
-name = "mopictl"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mopi-config",
- "mopi-ipc",
- "mopi-query",
- "mopi-types",
- "tokio",
- "toml_edit",
- "tracing",
-]
-
-[[package]]
-name = "mopid"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "camino",
- "mopi-chunking",
- "mopi-config",
- "mopi-crawl",
- "mopi-embed",
- "mopi-extract",
- "mopi-index-lexical",
- "mopi-index-meta",
- "mopi-index-vector",
- "mopi-ipc",
- "mopi-rank",
- "mopi-types",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
 ]
 
 [[package]]

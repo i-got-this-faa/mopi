@@ -103,7 +103,7 @@ This is a sample markdown file for testing.
 
 ## Usage
 
-Run `mopictl query <terms>` to search.
+Run `lssctl query <terms>` to search.
 "#
         .to_string(),
     }

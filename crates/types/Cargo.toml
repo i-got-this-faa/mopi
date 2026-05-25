@@ -1,5 +1,5 @@
 [package]
-name = "mopi-types"
+name = "lss-types"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,4 +1,4 @@
-use mopi_types::{
+use lss_types::{
     DaemonStats, DaemonStatus, DoctorReport, QueryId, RootSummary, SearchQuery, SearchResult,
 };
 use serde::{Deserialize, Serialize};

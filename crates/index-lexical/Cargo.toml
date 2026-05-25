@@ -1,12 +1,12 @@
 [package]
-name = "mopi-index-lexical"
+name = "lss-index-lexical"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 camino.workspace = true
-mopi-types = { version = "0.1.0", path = "../types" }
+lss-types = { version = "0.1.0", path = "../types" }
 serde.workspace = true
 tantivy = "0.22.0"
 thiserror.workspace = true

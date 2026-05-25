@@ -7,7 +7,7 @@ Last Updated: 2026-04-27
 
 ## Objective
 
-Implement `mopid` as the single owner of indexes, model state, background jobs, and query execution, and expose it through a fast local IPC layer that `kiwi` and `mopictl` can share.
+Implement `lssd` as the single owner of indexes, model state, background jobs, and query execution, and expose it through a fast local IPC layer that `lssi` and `lssctl` can share.
 
 ## Scope
 
@@ -21,7 +21,7 @@ Implement `mopid` as the single owner of indexes, model state, background jobs, 
 ## Protocol Decisions
 
 - Transport: Unix domain socket only
-- Preferred runtime location: `$XDG_RUNTIME_DIR/mopi/mopid.sock`
+- Preferred runtime location: `$XDG_RUNTIME_DIR/lss/lssd.sock`
 - Fallback runtime location when needed: XDG cache/runtime-managed private directory with strict permissions
 - Framing: length-delimited binary frames
 - Serialization: versioned binary format optimized for local same-machine use
@@ -30,7 +30,7 @@ Implement `mopid` as the single owner of indexes, model state, background jobs, 
 ## Core Responsibilities
 
 - [x] Start and own SQLite, lexical index, vector index, model runtime, and worker pools.
-- [x] Accept client connections from `mopictl` and `kiwi`.
+- [x] Accept client connections from `lssctl` and `lssi`.
 - [x] Validate protocol version and message framing.
 - [x] Handle query, admin, indexing, status, and diagnostics requests.
 - [ ] Stream progressive query results where applicable.
@@ -84,8 +84,8 @@ Implement `mopid` as the single owner of indexes, model state, background jobs, 
 
 ## Integration Contracts
 
-- [x] `mopictl` can connect without embedding search logic.
-- [ ] `kiwi` can request progressive results for each keystroke.
+- [x] `lssctl` can connect without embedding search logic.
+- [ ] `lssi` can request progressive results for each keystroke.
 - [ ] Search requests can return partial lexical results before semantic reranking completes.
 - [ ] Admin commands and status commands do not block on long-running search work.
 
@@ -99,9 +99,9 @@ Implement `mopid` as the single owner of indexes, model state, background jobs, 
 
 ## Verification
 
-- [x] Start `mopid` and confirm the socket appears in the expected runtime directory.
-- [x] Use `mopictl` to issue `Ping`, `GetStatus`, and `Search` requests.
-- [x] Use `mopictl` to issue `RefreshChanged` requests.
+- [x] Start `lssd` and confirm the socket appears in the expected runtime directory.
+- [x] Use `lssctl` to issue `Ping`, `GetStatus`, and `Search` requests.
+- [x] Use `lssctl` to issue `RefreshChanged` requests.
 - [x] Reload config in a running daemon and confirm watcher-backed indexing follows the new config.
 - [ ] Open multiple concurrent clients and confirm results remain correct.
 - [ ] Force-cancel repeated GUI-like search requests and confirm task cleanup.
@@ -109,5 +109,5 @@ Implement `mopid` as the single owner of indexes, model state, background jobs, 
 
 ## Notes And Risks
 
-- Do not let `kiwi` or `mopictl` bypass the daemon for direct index access.
+- Do not let `lssi` or `lssctl` bypass the daemon for direct index access.
 - Progressive results are mandatory for the launcher UX. A one-shot only search response is not sufficient.

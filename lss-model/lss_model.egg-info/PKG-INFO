@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: lss-model
+Version: 0.1.0
+Summary: Transformer embedding model training, evaluation, and ONNX export for LSS
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: datasets>=4.8.5
+Requires-Dist: evaluate>=0.4.6
+Requires-Dist: onnx>=1.21.0
+Requires-Dist: onnxruntime-gpu>=1.24.3
+Requires-Dist: onnxscript>=0.7.0
+Requires-Dist: scikit-learn>=1.7.2
+Requires-Dist: scipy>=1.15.3
+Requires-Dist: tokenizers>=0.22.2
+Requires-Dist: torch>=2.12.0
+Requires-Dist: torchaudio>=2.11.0
+Requires-Dist: torchvision>=0.27.0
+Requires-Dist: transformers>=5.9.0

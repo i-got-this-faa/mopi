@@ -4,7 +4,7 @@
 *.log
 
 # Runtime and cache artifacts
-/.mopi/
+/.lss/
 /fixtures/tmp/
 
 # XDG-like development outputs

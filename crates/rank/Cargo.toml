@@ -1,11 +1,11 @@
 [package]
-name = "mopi-rank"
+name = "lss-rank"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mopi-types = { path = "../types" }
+lss-types = { path = "../types" }
 camino.workspace = true
 
 [lints]

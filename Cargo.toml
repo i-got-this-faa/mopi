@@ -1,11 +1,9 @@
 [workspace]
 members = [
-    "bin/kiwi",
-    "bin/mopictl",
-    "bin/mopid", "crates/chunking",
+    "bin/lssctl",
+    "bin/lssd", "bin/lssi", "crates/chunking",
     "crates/config",
     "crates/crawl",
-    "crates/chunking",
     "crates/embed",
     "crates/extract",
     "crates/index-lexical",

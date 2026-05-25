@@ -21,7 +21,7 @@ Integrate a fully local embedding runtime and an embedded ANN search library tha
 ## Non-Negotiables
 
 - [ ] No remote embedding service dependency.
-- [ ] Model is loaded and reused inside `mopid`.
+- [ ] Model is loaded and reused inside `lssd`.
 - [ ] Query embedding latency stays within the interactive budget.
 - [ ] Batch indexing is efficient.
 - [ ] Failure to load the model does not disable lexical search.

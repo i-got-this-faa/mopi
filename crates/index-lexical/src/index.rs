@@ -94,7 +94,7 @@ impl LexicalStore {
 
     pub fn search(
         &self,
-        query: &mopi_types::SearchQuery,
+        query: &lss_types::SearchQuery,
     ) -> Result<Vec<LexicalSearchResult>, LexicalError> {
         let reader = self
             .index
@@ -193,7 +193,7 @@ pub struct LexicalSearchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mopi_types::SearchQuery;
+    use lss_types::SearchQuery;
     use tempfile::tempdir;
 
     fn open_test_store() -> (tempfile::TempDir, LexicalStore) {
@@ -206,13 +206,13 @@ mod tests {
     fn add_and_search_by_content() {
         let (_dir, mut store) = open_test_store();
         store
-            .add_document("doc1", "/test/file.txt", &[], "file.txt", "hello world from mopi", Some("txt"), Some("text/plain"))
+            .add_document("doc1", "/test/file.txt", &[], "file.txt", "hello world from lss", Some("txt"), Some("text/plain"))
             .expect("add should succeed");
         store.commit().expect("commit should succeed");
 
         let query = SearchQuery {
-            raw: "mopi".into(),
-            terms: "mopi".into(),
+            raw: "lss".into(),
+            terms: "lss".into(),
             limit: 10,
             filetype_filters: vec![],
             name_filters: vec![],

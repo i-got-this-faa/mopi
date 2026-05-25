@@ -1,16 +1,16 @@
-# mopi: Local Semantic Search
+# lss: Local Semantic Search
 
-`mopi` is a blazing fast, secure, and modular local semantic search engine for your files. It combines traditional lexical search with modern deep learning embeddings to provide "search-as-you-type" performance for semantic intent.
+`lss` is a blazing fast, secure, and modular local semantic search engine for your files. It combines traditional lexical search with modern deep learning embeddings to provide "search-as-you-type" performance for semantic intent.
 
 ## Core Architecture
 
-- **mopid**: A high-performance daemon that owns indexes, local model state, and background indexing jobs.
-- **mopictl**: An administrative and query CLI for controlling the engine.
-- **kiwi**: A Wayland-friendly, launcher-style GUI for interactive search.
+- **lssd**: A high-performance daemon that owns indexes, local model state, and background indexing jobs.
+- **lssctl**: An administrative and query CLI for controlling the engine.
+- **lssi**: A Wayland-friendly, launcher-style GUI for interactive search.
 
 ## Deep Learning & Performance
 
-mopi is designed for **extreme local performance** without cloud dependencies:
+lss is designed for **extreme local performance** without cloud dependencies:
 
 - **Local Embeddings**: Uses `all-MiniLM-L6-v2` via **FastEmbed-RS** and **ONNX Runtime**.
 - **Hardware Optimization**: Quantized `INT8` weights and SIMD/AVX-512 utilization for sub-20ms query embedding.
@@ -27,7 +27,7 @@ mopi is designed for **extreme local performance** without cloud dependencies:
 
 ## Workspace Layout
 
-- `bin/`: Binary crates (`mopid`, `mopictl`, `kiwi`).
+- `bin/`: Binary crates (`lssd`, `lssctl`, `lssi`).
 - `crates/`: Modular shared libraries (extraction, indexing, embedding, etc.).
 - `plans/`: Detailed execution and architecture roadmaps.
 - `fixtures/`: Test data for various file formats.
@@ -37,6 +37,6 @@ mopi is designed for **extreme local performance** without cloud dependencies:
 1. **Prerequisites**: Install stable Rust, `rustfmt`, and `clippy`.
 2. **Build**: `cargo build --release`
 3. **Test**: `cargo test --workspace`
-4. **Run**: Start the daemon with `cargo run --bin mopid` and query with `mopictl`.
+4. **Run**: Start the daemon with `cargo run --bin lssd` and query with `lssctl`.
 
 See `plans/00-master-tracker.md` for the current roadmap and development status.

@@ -1,4 +1,4 @@
-use mopi_types::SearchQuery;
+use lss_types::SearchQuery;
 
 #[must_use]
 pub fn parse_query(raw: impl Into<String>) -> SearchQuery {

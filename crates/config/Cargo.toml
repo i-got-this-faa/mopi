@@ -1,5 +1,5 @@
 [package]
-name = "mopi-config"
+name = "lss-config"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

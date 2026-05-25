@@ -9,7 +9,7 @@ use thiserror::Error;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MopiPaths {
+pub struct LssPaths {
     pub config_dir: Utf8PathBuf,
     pub config_file: Utf8PathBuf,
     pub data_dir: Utf8PathBuf,
@@ -17,7 +17,7 @@ pub struct MopiPaths {
     pub runtime_dir: Utf8PathBuf,
 }
 
-impl MopiPaths {
+impl LssPaths {
     pub fn discover() -> Result<Self, ConfigError> {
         let base_dirs = BaseDirs::new().ok_or(ConfigError::MissingBaseDirs)?;
         let home = Utf8PathBuf::from_path_buf(base_dirs.home_dir().to_path_buf())
@@ -36,10 +36,10 @@ impl MopiPaths {
             .map(Utf8PathBuf::from)
             .unwrap_or_else(|_| cache_root.join("runtime"));
 
-        let config_dir = config_root.join("mopi");
-        let data_dir = data_root.join("mopi");
-        let cache_dir = cache_root.join("mopi");
-        let runtime_dir = runtime_root.join("mopi");
+        let config_dir = config_root.join("lss");
+        let data_dir = data_root.join("lss");
+        let cache_dir = cache_root.join("lss");
+        let runtime_dir = runtime_root.join("lss");
 
         Ok(Self {
             config_file: config_dir.join("config.toml"),
@@ -52,7 +52,7 @@ impl MopiPaths {
 
     #[must_use]
     pub fn socket_file(&self) -> Utf8PathBuf {
-        self.runtime_dir.join("mopid.sock")
+        self.runtime_dir.join("lssd.sock")
     }
 
     pub fn ensure_layout(&self) -> Result<(), ConfigError> {
@@ -81,7 +81,7 @@ pub fn init_tracing() {
 }
 
 impl AppConfig {
-    pub fn load_or_default(paths: &MopiPaths) -> Result<Self, ConfigError> {
+    pub fn load_or_default(paths: &LssPaths) -> Result<Self, ConfigError> {
         if paths.config_file.exists() {
             let raw = fs::read_to_string(&paths.config_file)?;
             let config = toml::from_str(&raw)?;
@@ -94,7 +94,7 @@ impl AppConfig {
         }
     }
 
-    pub fn write_default(paths: &MopiPaths) -> Result<(), ConfigError> {
+    pub fn write_default(paths: &LssPaths) -> Result<(), ConfigError> {
         paths.ensure_layout()?;
         let config = Self::default_template();
         fs::write(&paths.config_file, config)?;
@@ -104,7 +104,7 @@ impl AppConfig {
     #[must_use]
     pub fn default_template() -> String {
         String::from(
-            "# Global mopi configuration\n\
+            "# Global lss configuration\n\
              # Add one or more searchable roots.\n\
              # [[roots]]\n\
              # path = \"/home/you/Documents\"\n\n\
@@ -371,7 +371,7 @@ pub struct AppConfig {
 
 impl DaemonConfig {
     #[must_use]
-    pub fn socket_path(&self, paths: &MopiPaths) -> Utf8PathBuf {
+    pub fn socket_path(&self, paths: &LssPaths) -> Utf8PathBuf {
         if self.socket_override.is_empty() {
             paths.socket_file()
         } else {
@@ -655,7 +655,7 @@ mod tests {
     fn missing_root_fails_validation() {
         let mut config = AppConfig::default();
         config.roots.push(RootConfig {
-            path: Utf8PathBuf::from("/definitely/missing/mopi-root"),
+            path: Utf8PathBuf::from("/definitely/missing/lss-root"),
         });
 
         assert!(matches!(

@@ -1,0 +1,3 @@
+[console_scripts]
+lss-export = lss_model.cli:export_main
+lss-train = lss_model.cli:train_main

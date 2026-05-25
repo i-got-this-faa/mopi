@@ -74,7 +74,7 @@ These rules are critical because symlinks must be followed.
 - [x] Test against multiple alias paths to the same canonical file.
 - [x] Test whitelist and blacklist behavior with mixed file types.
 - [x] Test incremental refresh with unchanged, modified, added, and deleted files.
-- [x] Smoke-test daemon-owned changed-only refresh through `mopictl refresh`.
+- [x] Smoke-test daemon-owned changed-only refresh through `lssctl refresh`.
 - [x] Smoke-test config reload rebuilding watcher state and indexing the new roots.
 
 ## Notes And Risks

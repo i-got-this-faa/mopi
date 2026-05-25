@@ -18,11 +18,11 @@ Build a secure, blazing fast, accurate, modular local semantic search engine for
 ## Fixed Architecture
 
 - Language: Rust
-- Binaries: `mopid`, `kiwi`, `mopictl`
+- Binaries: `lssd`, `lssi`, `lssctl`
 - Lexical search: embedded index, content and name aware
 - Semantic search: fully local embeddings plus embedded ANN library
 - Metadata/state: SQLite
-- Config: single global XDG config under `XDG_CONFIG_HOME/mopi`
+- Config: single global XDG config under `XDG_CONFIG_HOME/lss`
 - Filters: soft by default
 - Hidden files: ignored by default
 - Policies: whitelist and blacklist modes
@@ -31,10 +31,10 @@ Build a secure, blazing fast, accurate, modular local semantic search engine for
 
 ## Global Success Criteria
 
-- [x] `mopid` serves queries over a local Unix socket without remote network exposure.
+- [x] `lssd` serves queries over a local Unix socket without remote network exposure.
 - [ ] Warm lexical queries return interactively fast on realistic corpora.
 - [ ] Warm hybrid queries return interactively fast on realistic corpora.
-- [ ] `kiwi` shows progressive search results quickly enough to feel launcher-like.
+- [ ] `lssi` shows progressive search results quickly enough to feel launcher-like.
 - [ ] Name and content both materially influence ranking.
 - [ ] `filetype:` and `name:` work as soft metadata filters by default.
 - [x] Plain text and config files index correctly.
@@ -52,7 +52,7 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 
 - [ ] Warm daemon lexical query P50 under 60 ms on the reference development machine.
 - [ ] Warm daemon hybrid query P50 under 200 ms on the reference development machine.
-- [ ] `kiwi` first visible results under 50 ms after a typical keystroke on a warm index.
+- [ ] `lssi` first visible results under 50 ms after a typical keystroke on a warm index.
 - [ ] Query embedding time stays within the interactive budget on the reference model.
 - [ ] Indexing unchanged files avoids expensive re-extraction and re-embedding.
 - [ ] PDF extraction path remains speed-first and does not block the full pipeline on slow documents.
@@ -69,8 +69,8 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 | Storage and indexing | `plans/06-storage-and-indexing.md` | IN PROGRESS | 01, 02, 03, 04, 05 |
 | Embeddings and vector search | `plans/07-embeddings-and-vector-search.md` | DONE | 01, 05, 06 |
 | Query, ranking, filters | `plans/08-query-ranking-and-filters.md` | IN PROGRESS | 02, 05, 06, 07 |
-| CLI | `plans/09-cli-mopictl.md` | NOT STARTED | 02, 03, 06, 08 |
-| GUI | `plans/10-kiwi-gui.md` | IN PROGRESS | 02, 08 |
+| CLI | `plans/09-cli-lssctl.md` | NOT STARTED | 02, 03, 06, 08 |
+| GUI | `plans/10-lssi-gui.md` | IN PROGRESS | 02, 08 |
 | Testing, benchmarks, hardening | `plans/11-testing-benchmarks-and-hardening.md` | NOT STARTED | 01-10 |
 | Observability, release, maintenance | `plans/12-observability-release-and-maintenance.md` | NOT STARTED | 01-11 |
 | Agent execution map | `plans/13-agent-execution-map.md` | IN PROGRESS | None |
@@ -89,8 +89,8 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 - [x] Crawl and policy engine walks allowed roots, ignores dotfiles, and handles symlink loops safely.
 - [x] Plain text and config extraction work. (Plus Office/PDF)
 - [x] SQLite and Tantivy integration work. (Core schema DONE)
-- [x] `mopid` can answer lexical name-and-content queries.
-- [x] `mopictl query` is usable end-to-end.
+- [x] `lssd` can answer lexical name-and-content queries.
+- [x] `lssctl query` is usable end-to-end.
 
 ### M2 Semantic Hybrid Search
 
@@ -105,7 +105,7 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 - [ ] `docx` extraction works.
 - [ ] `odt` extraction works.
 - [ ] Fast `pdf` extraction works.
-- [ ] `kiwi` streams results from `mopid` with launcher-style UX.
+- [ ] `lssi` streams results from `lssd` with launcher-style UX.
 
 ### M4 Hardening And Release Readiness
 
@@ -118,7 +118,7 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 ## Cross-Stream Contracts That Must Stay Stable
 
 - [ ] Config schema changes are reflected in config docs, CLI flows, and daemon reload behavior.
-- [ ] IPC request and response changes are reflected in `mopictl` and `kiwi` clients.
+- [ ] IPC request and response changes are reflected in `lssctl` and `lssi` clients.
 - [ ] Storage schema changes include migration and recovery notes.
 - [ ] Search result types always include enough information for filename, path, snippet, and explanation display.
 - [ ] File identity rules stay consistent across crawler, storage, and indexers.

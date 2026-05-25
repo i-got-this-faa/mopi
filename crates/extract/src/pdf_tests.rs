@@ -3,7 +3,7 @@ mod tests {
     use crate::extractor::{ExtractionError, Extractor};
     use crate::pdf::PdfExtractor;
     use camino::Utf8PathBuf;
-    use mopi_config::ExtractionConfig;
+    use lss_config::ExtractionConfig;
     use std::fs;
     use tempfile::tempdir;
 

@@ -1,4 +1,4 @@
-use mopi_types::{MatchReason, SearchResult};
+use lss_types::{MatchReason, SearchResult};
 use std::collections::HashMap;
 
 pub fn combine_and_rank(
@@ -50,7 +50,7 @@ pub fn combine_and_rank(
 mod tests {
     use super::*;
     use camino::Utf8PathBuf;
-    use mopi_types::DocumentId;
+    use lss_types::DocumentId;
 
     fn make_result(id: DocumentId) -> SearchResult {
         SearchResult {

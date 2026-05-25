@@ -1,4 +1,4 @@
-# CLI: mopictl
+# CLI: lssctl
 
 Overall Status: NOT STARTED  
 Current Owner: UNASSIGNED  
@@ -7,7 +7,7 @@ Last Updated: 2026-04-27
 
 ## Objective
 
-Provide a fast administrative and query CLI that talks to `mopid`, exposes core indexing workflows, surfaces diagnostics, and supports machine-readable output for scripting.
+Provide a fast administrative and query CLI that talks to `lssd`, exposes core indexing workflows, surfaces diagnostics, and supports machine-readable output for scripting.
 
 ## Scope
 
@@ -19,20 +19,20 @@ Provide a fast administrative and query CLI that talks to `mopid`, exposes core 
 
 ## Minimum Command Surface
 
-- [ ] `mopictl ping`
-- [ ] `mopictl status`
-- [ ] `mopictl stats`
-- [ ] `mopictl query <terms>`
-- [ ] `mopictl roots list`
-- [ ] `mopictl roots add <path>`
-- [ ] `mopictl roots remove <path>`
-- [ ] `mopictl reindex`
-- [ ] `mopictl refresh`
-- [ ] `mopictl index-path <path>`
-- [ ] `mopictl config show`
-- [ ] `mopictl config validate`
-- [ ] `mopictl failures`
-- [ ] `mopictl doctor`
+- [ ] `lssctl ping`
+- [ ] `lssctl status`
+- [ ] `lssctl stats`
+- [ ] `lssctl query <terms>`
+- [ ] `lssctl roots list`
+- [ ] `lssctl roots add <path>`
+- [ ] `lssctl roots remove <path>`
+- [ ] `lssctl reindex`
+- [ ] `lssctl refresh`
+- [ ] `lssctl index-path <path>`
+- [ ] `lssctl config show`
+- [ ] `lssctl config validate`
+- [ ] `lssctl failures`
+- [ ] `lssctl doctor`
 
 ## Output Requirements
 
@@ -67,4 +67,4 @@ Provide a fast administrative and query CLI that talks to `mopid`, exposes core 
 
 ## Notes And Risks
 
-- `mopictl` is not a second search engine. Keep it as a client of the daemon, not a duplicate runtime.
+- `lssctl` is not a second search engine. Keep it as a client of the daemon, not a duplicate runtime.

@@ -7,7 +7,7 @@ Last Updated: 2026-04-27
 
 ## Objective
 
-Define and implement the single global XDG configuration model for `mopi`, including root selection, whitelist and blacklist policies, hidden-file handling, extractor limits, daemon settings, and ranking knobs.
+Define and implement the single global XDG configuration model for `lss`, including root selection, whitelist and blacklist policies, hidden-file handling, extractor limits, daemon settings, and ranking knobs.
 
 ## Scope
 
@@ -21,10 +21,10 @@ Define and implement the single global XDG configuration model for `mopi`, inclu
 
 ## Required Paths
 
-- Config: `XDG_CONFIG_HOME/mopi/config.toml`
-- Data: `XDG_DATA_HOME/mopi/`
-- Cache: `XDG_CACHE_HOME/mopi/`
-- Runtime: `XDG_RUNTIME_DIR/mopi/`
+- Config: `XDG_CONFIG_HOME/lss/config.toml`
+- Data: `XDG_DATA_HOME/lss/`
+- Cache: `XDG_CACHE_HOME/lss/`
+- Runtime: `XDG_RUNTIME_DIR/lss/`
 
 ## Minimum Config Domains
 
@@ -77,7 +77,7 @@ Define and implement the single global XDG configuration model for `mopi`, inclu
 - [x] Implement hidden path detection helper shared with the crawler.
 - [x] Implement config reload behavior for the daemon.
 - [x] Document the schema with a commented sample config.
-- [x] Expose config validation through `mopictl`.
+- [x] Expose config validation through `lssctl`.
 
 ## Acceptance Criteria
 

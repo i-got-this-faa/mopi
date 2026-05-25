@@ -1,5 +1,5 @@
 [package]
-name = "mopi-chunking"
+name = "lss-chunking"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

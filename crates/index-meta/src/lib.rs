@@ -1,7 +1,7 @@
 pub mod db;
 
 pub use db::{FileRecord, MetaError, MetaStore};
-use mopi_types::DocumentId;
+use lss_types::DocumentId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

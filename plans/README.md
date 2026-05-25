@@ -1,6 +1,6 @@
-# Mopi Planning Suite
+# Lss Planning Suite
 
-Purpose: these files are the execution plans and the completion trackers for the initial build of `mopi`.
+Purpose: these files are the execution plans and the completion trackers for the initial build of `lss`.
 
 This suite is written for parallel agent execution. Each subsystem file is detailed enough to let an agent pick up work, implement against a stable contract, and update progress without needing to reconstruct the overall architecture from chat history.
 
@@ -28,14 +28,14 @@ When work is blocked, do not mark items complete. Add a short blocker note insid
 - Keep shared contracts stable: config schema, IPC message shapes, storage schema, and search result types should not drift independently.
 - Preserve soft metadata filter behavior by default. `filetype:rs` and `name:main` should bias results rather than hard-exclude them unless a strict mode is explicitly introduced.
 - Optimize for warm-query latency and indexing throughput, but do not bypass safety checks around traversal, parser limits, or corrupted document handling.
-- `mopid` owns indexes and model state. `kiwi` and `mopictl` are clients.
+- `lssd` owns indexes and model state. `lssi` and `lssctl` are clients.
 
 ## Fixed Product Decisions
 
 - Implementation language: Rust
-- Topology: `mopid` daemon + `kiwi` GUI + `mopictl` CLI
+- Topology: `lssd` daemon + `lssi` GUI + `lssctl` CLI
 - Embeddings: fully local model runtime
-- Config: single global config rooted at `XDG_CONFIG_HOME/mopi`
+- Config: single global config rooted at `XDG_CONFIG_HOME/lss`
 - Search relevance: content-first, with filename/path and metadata boosts
 - Filters: soft by default
 - Hidden files: ignored by default
@@ -47,15 +47,15 @@ When work is blocked, do not mark items complete. Add a short blocker note insid
 
 - `plans/00-master-tracker.md`: master tracker, milestones, dependency map, global acceptance criteria
 - `plans/01-workspace-and-foundation.md`: workspace layout, crate scaffold, shared conventions
-- `plans/02-daemon-and-ipc.md`: `mopid`, socket protocol, request lifecycle, streaming search
+- `plans/02-daemon-and-ipc.md`: `lssd`, socket protocol, request lifecycle, streaming search
 - `plans/03-config-and-policy.md`: XDG config, policy schema, validation, defaults
 - `plans/04-crawl-and-discovery.md`: directory traversal, ignore rules, symlink following, change detection
 - `plans/05-extraction-and-normalization.md`: text/config/docx/odt/pdf extraction pipeline
 - `plans/06-storage-and-indexing.md`: SQLite, Tantivy, vector metadata coordination, recovery
 - `plans/07-embeddings-and-vector-search.md`: model runtime, chunk embedding, ANN index
 - `plans/08-query-ranking-and-filters.md`: query grammar, hybrid retrieval, reranking, snippets
-- `plans/09-cli-mopictl.md`: CLI commands, admin workflows, JSON output
-- `plans/10-kiwi-gui.md`: Wayland launcher UI, streaming UX, actions
+- `plans/09-cli-lssctl.md`: CLI commands, admin workflows, JSON output
+- `plans/10-lssi-gui.md`: Wayland launcher UI, streaming UX, actions
 - `plans/11-testing-benchmarks-and-hardening.md`: fixtures, adversarial tests, benchmarks, fuzzing
 - `plans/12-observability-release-and-maintenance.md`: logging, stats, systemd user service, packaging, docs
 - `plans/13-agent-execution-map.md`: recommended agent sequencing and parallelization boundaries

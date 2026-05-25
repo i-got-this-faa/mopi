@@ -1,6 +1,6 @@
 use crate::ExtractionOutput;
 use camino::Utf8Path;
-use mopi_config::ExtractionConfig;
+use lss_config::ExtractionConfig;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

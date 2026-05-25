@@ -44,12 +44,12 @@ These can proceed together once storage and initial daemon query surfaces exist.
 
 - [ ] remaining `plans/07-embeddings-and-vector-search.md`
 - [ ] `plans/08-query-ranking-and-filters.md`
-- [x] `plans/09-cli-mopictl.md` (Daemon side DONE)
+- [x] `plans/09-cli-lssctl.md` (Daemon side DONE)
 
 ### Phase 5
 
 - [ ] office and PDF parts of `plans/05-extraction-and-normalization.md`
-- [ ] `plans/10-kiwi-gui.md`
+- [ ] `plans/10-lssi-gui.md`
 
 ### Phase 6
 

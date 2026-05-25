@@ -7,7 +7,7 @@ Last Updated: 2026-04-27
 
 ## Objective
 
-Provide the operational surfaces required to run, inspect, package, and maintain `mopi` as a local desktop service and toolset.
+Provide the operational surfaces required to run, inspect, package, and maintain `lss` as a local desktop service and toolset.
 
 ## Scope
 
@@ -21,14 +21,14 @@ Provide the operational surfaces required to run, inspect, package, and maintain
 ## Logging And Stats Checklist
 
 - [ ] Add structured tracing across daemon, indexing, extraction, and query paths.
-- [ ] Expose daemon stats through IPC and `mopictl`.
+- [ ] Expose daemon stats through IPC and `lssctl`.
 - [ ] Record extractor failures and indexing failures in inspectable form.
 - [ ] Make performance counters visible enough to debug latency and throughput problems.
 
 ## Packaging Checklist
 
 - [ ] Define install locations for binaries, config sample, and service files.
-- [ ] Provide a `systemd --user` service for `mopid`.
+- [ ] Provide a `systemd --user` service for `lssd`.
 - [ ] Document how indexes and model files are stored under XDG paths.
 - [ ] Document upgrade and migration behavior.
 - [ ] Decide how model artifacts are provisioned or downloaded locally.
@@ -58,7 +58,7 @@ Provide the operational surfaces required to run, inspect, package, and maintain
 ## Verification
 
 - [ ] Install the binaries into a clean test environment and verify XDG paths.
-- [ ] Start `mopid` as a user service and query it through `mopictl` and `kiwi`.
+- [ ] Start `lssd` as a user service and query it through `lssctl` and `lssi`.
 - [ ] Exercise `doctor` and failure-reporting flows.
 - [ ] Validate migration or rebuild behavior across version changes.
 

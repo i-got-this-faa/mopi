@@ -1,5 +1,5 @@
 use crate::CrawlError;
-use mopi_config::{AppConfig, PolicyMatcher};
+use lss_config::{AppConfig, PolicyMatcher};
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebouncedEvent, Debouncer, NoCache, new_debouncer};
 use std::sync::Arc;
@@ -11,11 +11,11 @@ pub enum WatchSignal {
     RefreshRequested,
 }
 
-pub struct MopiWatcher {
+pub struct LssWatcher {
     _debouncer: Debouncer<notify::RecommendedWatcher, NoCache>,
 }
 
-impl MopiWatcher {
+impl LssWatcher {
     pub fn new(
         config: AppConfig,
         signal_tx: mpsc::Sender<WatchSignal>,
@@ -105,7 +105,7 @@ fn has_relevant_event(
 mod tests {
     use super::*;
     use camino::Utf8PathBuf;
-    use mopi_config::RootConfig;
+    use lss_config::RootConfig;
     use notify::{Event, event::CreateKind};
     use tempfile::tempdir;
 

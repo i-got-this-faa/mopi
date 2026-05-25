@@ -1,0 +1,18 @@
+[package]
+name = "lssctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+lss-config = { path = "../../crates/config" }
+lss-ipc = { path = "../../crates/ipc" }
+lss-query = { version = "0.1.0", path = "../../crates/query" }
+lss-types = { path = "../../crates/types" }
+tokio.workspace = true
+toml_edit = "0.25.11"
+tracing.workspace = true
+
+[lints]
+workspace = true

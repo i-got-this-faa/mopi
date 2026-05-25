@@ -21,7 +21,7 @@ Create the Rust workspace, crate boundaries, shared conventions, and baseline to
 ## Deliverables
 
 - [x] Root `Cargo.toml` workspace manifest.
-- [x] Binary crates for `mopid`, `mopictl`, and `kiwi`.
+- [x] Binary crates for `lssd`, `lssctl`, and `lssi`.
 - [x] Shared crates for types, config, crawl, extraction, indexing, query, ranking, and IPC.
 - [x] Baseline README with developer bootstrap instructions.
 - [x] Formatting and lint configuration.
@@ -29,9 +29,9 @@ Create the Rust workspace, crate boundaries, shared conventions, and baseline to
 
 ## Recommended Workspace Layout
 
-- `bin/mopid`
-- `bin/mopictl`
-- `bin/kiwi`
+- `bin/lssd`
+- `bin/lssctl`
+- `bin/lssi`
 - `crates/types`
 - `crates/config`
 - `crates/crawl`
@@ -69,8 +69,8 @@ Create the Rust workspace, crate boundaries, shared conventions, and baseline to
 - `types` must not depend on application crates.
 - `config` may depend on `types`, but not on UI crates.
 - `ipc` may depend on `types`, but not on GUI code.
-- `mopid` may depend on everything except `kiwi` and `mopictl`.
-- `mopictl` and `kiwi` should depend on `ipc`, `types`, and lightweight shared helpers only.
+- `lssd` may depend on everything except `lssi` and `lssctl`.
+- `lssctl` and `lssi` should depend on `ipc`, `types`, and lightweight shared helpers only.
 - Extractors must not depend on GUI or CLI crates.
 
 ## Acceptance Criteria

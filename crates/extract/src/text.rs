@@ -2,7 +2,7 @@ use crate::ExtractionOutput;
 use crate::extractor::{ExtractionError, Extractor};
 use crate::normalize::normalize_text;
 use camino::Utf8Path;
-use mopi_config::ExtractionConfig;
+use lss_config::ExtractionConfig;
 use std::fs;
 use std::io::Read;
 

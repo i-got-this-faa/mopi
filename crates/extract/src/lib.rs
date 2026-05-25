@@ -15,7 +15,7 @@ use crate::office::OfficeExtractor;
 use crate::pdf::PdfExtractor;
 use crate::text::TextExtractor;
 use camino::{Utf8Path, Utf8PathBuf};
-use mopi_config::ExtractionConfig;
+use lss_config::ExtractionConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,7 +124,7 @@ fn is_text_format(extension: &str, config: &ExtractionConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mopi_config::AppConfig;
+    use lss_config::AppConfig;
     use std::fs;
     use tempfile::tempdir;
 

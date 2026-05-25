@@ -1,4 +1,4 @@
-# Kiwi GUI
+# Lssi GUI
 
 Overall Status: IN PROGRESS
 Current Owner: OpenCode  
@@ -7,7 +7,7 @@ Last Updated: 2026-04-27
 
 ## Objective
 
-Build `kiwi` as a Wayland-friendly launcher-style GUI that streams results from `mopid`, emphasizes content relevance, stays keyboard-first, and feels instant during interactive typing.
+Build `lssi` as a Wayland-friendly launcher-style GUI that streams results from `lssd`, emphasizes content relevance, stays keyboard-first, and feels instant during interactive typing.
 
 ## Scope
 
@@ -61,7 +61,7 @@ Build `kiwi` as a Wayland-friendly launcher-style GUI that streams results from 
 
 ## Acceptance Criteria
 
-- [ ] `kiwi` is usable as a daily keyboard-first search launcher.
+- [ ] `lssi` is usable as a daily keyboard-first search launcher.
 - [ ] Content relevance is obvious from the displayed snippets.
 - [ ] The UI remains responsive during rapid interactive searching.
 - [ ] Result actions work reliably on local files.

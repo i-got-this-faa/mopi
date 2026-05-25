@@ -56,7 +56,7 @@ pub mod provider {
     }
 
     impl FastEmbedProvider {
-        pub fn new(config: &mopi_config::EmbeddingConfig) -> Result<Self, EmbedError> {
+        pub fn new(config: &lss_config::EmbeddingConfig) -> Result<Self, EmbedError> {
             if config.backend == "none" {
                 return Err(EmbedError::ModelUnavailable);
             }
@@ -220,7 +220,7 @@ pub mod provider {
     }
 
     fn load_remote_artifacts(
-        config: &mopi_config::EmbeddingConfig,
+        config: &lss_config::EmbeddingConfig,
     ) -> Result<ModelArtifacts, EmbedError> {
         let cache_dir = cache_dir_from_config(config);
         info!(
@@ -433,7 +433,7 @@ pub mod provider {
         v.iter().map(|&val| val / (norm + epsilon)).collect()
     }
 
-    fn local_model_dir_from_config(config: &mopi_config::EmbeddingConfig) -> Option<PathBuf> {
+    fn local_model_dir_from_config(config: &lss_config::EmbeddingConfig) -> Option<PathBuf> {
         if config.model_path.is_empty() {
             return None;
         }
@@ -462,7 +462,7 @@ pub mod provider {
             .all(|file| path.join(file).is_file())
     }
 
-    fn cache_dir_from_config(config: &mopi_config::EmbeddingConfig) -> PathBuf {
+    fn cache_dir_from_config(config: &lss_config::EmbeddingConfig) -> PathBuf {
         if config.model_path.is_empty() {
             PathBuf::from(".fastembed_cache")
         } else {
@@ -481,7 +481,7 @@ pub mod provider {
 
         #[test]
         fn backend_none_disables_provider() {
-            let config = mopi_config::EmbeddingConfig {
+            let config = lss_config::EmbeddingConfig {
                 backend: String::from("none"),
                 ..Default::default()
             };
@@ -531,7 +531,7 @@ pub mod provider {
         #[ignore = "downloads the embedding model when not already cached locally"]
         fn loads_model_and_generates_embeddings() {
             let cache_dir = tempdir().expect("temp dir should be created");
-            let config = mopi_config::EmbeddingConfig {
+            let config = lss_config::EmbeddingConfig {
                 model_path: cache_dir.path().to_string_lossy().to_string(),
                 ..Default::default()
             };

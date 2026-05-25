@@ -1,12 +1,12 @@
 [package]
-name = "mopi-crawl"
+name = "lss-crawl"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 camino.workspace = true
-mopi-config = { path = "../config" }
+lss-config = { path = "../config" }
 notify = "8.0.0"
 notify-debouncer-full = "0.5.0"
 serde.workspace = true

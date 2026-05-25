@@ -3,7 +3,7 @@ use crate::extractor::{ExtractionError, Extractor};
 use crate::normalize::normalize_text;
 use camino::Utf8Path;
 use lopdf::Document;
-use mopi_config::ExtractionConfig;
+use lss_config::ExtractionConfig;
 
 pub struct PdfExtractor;
 

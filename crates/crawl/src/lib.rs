@@ -1,7 +1,7 @@
 pub mod watch;
 
 use camino::Utf8PathBuf;
-use mopi_config::{AppConfig, ConfigError};
+use lss_config::{AppConfig, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -291,7 +291,7 @@ pub fn resolve_candidate(
         extension: observed_path.extension().map(ToOwned::to_owned),
         file_size: metadata.len(),
         modified_unix_seconds,
-        hidden: mopi_config::is_hidden_path(relative_path),
+            hidden: lss_config::is_hidden_path(relative_path),
         is_alias,
         observed_path: observed_path.clone(),
         canonical_path,
@@ -307,7 +307,7 @@ pub fn utf8(path: impl AsRef<std::path::Path>) -> Result<Utf8PathBuf, CrawlError
 mod tests {
     use super::*;
     use camino::Utf8Path;
-    use mopi_config::{PolicyMode, RootConfig};
+    use lss_config::{PolicyMode, RootConfig};
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 

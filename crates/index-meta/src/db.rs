@@ -1,4 +1,4 @@
-use mopi_types::DocumentId;
+use lss_types::DocumentId;
 use rusqlite::{Connection, Result, params};
 use std::path::Path;
 use thiserror::Error;

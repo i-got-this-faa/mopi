@@ -1,12 +1,12 @@
 [package]
-name = "mopi-ipc"
+name = "lss-ipc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-mopi-types = { path = "../types" }
+lss-types = { path = "../types" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
