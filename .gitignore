@@ -19,3 +19,7 @@
 
 
 /__pycache__/
+
+# Model binaries (too large for git)
+lss-model/output/lss-embedding-model/
+lss-model/notebooks/output/lss-embedding-model/
