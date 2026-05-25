@@ -88,12 +88,11 @@ pub mod provider {
             info!(
                 model_file = %artifacts.model_path.display(),
                 optimization = "Level1",
-                intra_threads = 1,
-                inter_threads = 1,
-                execution_mode = "sequential",
+                backend = %config.backend,
                 "embedder ORT session creation started"
             );
-            let session = Session::builder()
+
+            let mut builder = Session::builder()
                 .map_err(to_embed_error)?
                 .with_optimization_level(GraphOptimizationLevel::Level1)
                 .map_err(|e| EmbedError::Generation(e.to_string()))?
@@ -104,7 +103,32 @@ pub mod provider {
                 .with_parallel_execution(false)
                 .map_err(|e| EmbedError::Generation(e.to_string()))?
                 .with_memory_pattern(false)
-                .map_err(|e| EmbedError::Generation(e.to_string()))?
+                .map_err(|e| EmbedError::Generation(e.to_string()))?;
+
+            // Configure execution provider based on backend selection
+            match config.backend.as_str() {
+                "cuda" => {
+                    info!("configuring CUDA execution provider");
+                    builder = builder
+                        .with_execution_providers([
+                            ort::ep::CUDA::default().build().error_on_failure(),
+                        ])
+                        .map_err(|e| EmbedError::Generation(format!("CUDA init failed: {e}")))?;
+                }
+                "auto" => {
+                    // Try CUDA, silently fall back to CPU
+                    let cuda_ep = ort::ep::CUDA::default().build();
+                    info!("auto-detecting execution providers: trying CUDA");
+                    builder = builder
+                        .with_execution_providers([cuda_ep])
+                        .map_err(|e| EmbedError::Generation(format!("provider config failed: {e}")))?;
+                }
+                _ => {
+                    info!("using CPU execution provider (backend={})", config.backend);
+                }
+            }
+
+            let session = builder
                 .commit_from_file(&artifacts.model_path)
                 .map_err(to_embed_error)?;
             let need_token_type_ids = session
