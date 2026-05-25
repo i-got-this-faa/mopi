@@ -230,6 +230,9 @@ async fn handle_client(mut stream: UnixStream, status: SharedStatus) -> Result<(
                 handle_streaming_search(&mut stream, &status, query_id, query).await?;
             }
             Request::CancelSearch { query_id } => {
+                // In the cancel-and-resubmit pattern (used by lssi on each keystroke),
+                // a cancel may arrive after the search already completed. That's normal
+                // and not an error — the search is no longer running either way.
                 let cancelled = {
                     if let Ok(mut searches) = status.active_searches.lock() {
                         searches.remove(&query_id)
@@ -239,22 +242,14 @@ async fn handle_client(mut stream: UnixStream, status: SharedStatus) -> Result<(
                 };
                 if let Some(token) = cancelled {
                     token.cancel();
-                    write_frame(
-                        &mut stream,
-                        &ResponseEnvelope::new(Response::Ack {
-                            message: format!("cancelled search {}", query_id.0),
-                        }),
-                    )
-                    .await?;
-                } else {
-                    write_frame(
-                        &mut stream,
-                        &ResponseEnvelope::new(Response::Error {
-                            message: format!("search {} not found or already completed", query_id.0),
-                        }),
-                    )
-                    .await?;
                 }
+                write_frame(
+                    &mut stream,
+                    &ResponseEnvelope::new(Response::Ack {
+                        message: format!("cancelled search {}", query_id.0),
+                    }),
+                )
+                .await?;
             }
             request => {
                 let response = dispatch_simple_request(request, &status).await;

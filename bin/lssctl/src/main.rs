@@ -89,15 +89,39 @@ async fn main() -> Result<()> {
         Some("search") => {
             let query_str = args.get(2..).unwrap_or(&[]).join(" ");
             let query = lss_query::parse_query(query_str);
-            let response = send_request(
-                &paths,
-                Request::Search {
+            let config = AppConfig::load_or_default(&paths)?;
+            let socket_path = config.daemon.socket_path(&paths);
+            let mut stream = UnixStream::connect(socket_path.as_std_path()).await?;
+            write_frame(
+                &mut stream,
+                &RequestEnvelope::new(Request::Search {
                     query_id: QueryId::new(),
                     query,
-                },
+                }),
             )
             .await?;
-            print_response(response);
+            // Read streaming frames until final
+            loop {
+                let envelope: ResponseEnvelope = read_frame(&mut stream).await?;
+                match envelope.response {
+                    Response::SearchResultChunk { results, is_final, .. } => {
+                        for r in &results {
+                            println!("{:.3}  {}  {}",
+                                r.score,
+                                r.path,
+                                r.snippet.chars().take(120).collect::<String>()
+                            );
+                        }
+                        if is_final {
+                            break;
+                        }
+                    }
+                    other => {
+                        print_response(other);
+                        break;
+                    }
+                }
+            }
         }
         _ => print_usage(&paths),
     }
