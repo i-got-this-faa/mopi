@@ -92,6 +92,52 @@ impl LexicalStore {
         Ok(())
     }
 
+    /// Full-text search returning matching document content for grep-style
+    /// post-filtering. Returns `(id, canonical_path, content)` tuples.
+    pub fn search_content(
+        &self,
+        pattern: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String)>, LexicalError> {
+        let reader = self
+            .index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()?;
+        let searcher = reader.searcher();
+
+        let query_parser = QueryParser::for_index(
+            &self.index,
+            vec![self.schema.filename, self.schema.content],
+        );
+
+        let query = query_parser.parse_query(pattern)?;
+        let top_docs = searcher.search(&query, &tantivy::collector::TopDocs::with_limit(limit))?;
+
+        let mut results = Vec::new();
+        for (_score, doc_address) in top_docs {
+            let retrieved_doc: TantivyDocument = searcher.doc(doc_address)?;
+            let id = retrieved_doc
+                .get_first(self.schema.id)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let path = retrieved_doc
+                .get_first(self.schema.canonical_path)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let content = retrieved_doc
+                .get_first(self.schema.content)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            results.push((id, path, content));
+        }
+
+        Ok(results)
+    }
+
     pub fn search(
         &self,
         query: &lss_types::SearchQuery,

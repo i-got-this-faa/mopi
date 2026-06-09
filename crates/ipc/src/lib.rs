@@ -1,6 +1,6 @@
 use lss_types::{
-    DaemonStats, DaemonStatus, DoctorReport, FailureRecord, QueryId, RootSummary, SearchQuery,
-    SearchResult,
+    DaemonStats, DaemonStatus, DoctorReport, FailureRecord, GrepMatch, QueryId, RootSummary,
+    SearchQuery, SearchResult,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -59,6 +59,13 @@ pub enum Request {
     CancelSearch {
         query_id: QueryId,
     },
+    GrepQuery {
+        query_id: QueryId,
+        pattern: String,
+        case_sensitive: bool,
+        limit: usize,
+        filetype_filters: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,6 +91,11 @@ pub enum Response {
     SearchResultChunk {
         query_id: QueryId,
         results: Vec<SearchResult>,
+        is_final: bool,
+    },
+    GrepChunk {
+        query_id: QueryId,
+        matches: Vec<GrepMatch>,
         is_final: bool,
     },
 }

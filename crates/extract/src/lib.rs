@@ -1,29 +1,40 @@
 pub mod extractor;
 pub mod normalize;
-pub mod office;
-pub mod pdf;
 pub mod text;
 
-#[cfg(test)]
-mod office_tests;
-
-#[cfg(test)]
-mod pdf_tests;
-
 use crate::extractor::{ExtractionError, Extractor};
-use crate::office::OfficeExtractor;
-use crate::pdf::PdfExtractor;
 use crate::text::TextExtractor;
 use camino::{Utf8Path, Utf8PathBuf};
 use lss_config::ExtractionConfig;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExtractionWarningCode {
+    FileTooLarge,
+    TruncatedBytes,
+    TruncatedPages,
+    TruncatedChars,
+    PartialPageFailure,
+    ArchiveEntrySkipped,
+    InvalidXmlRecovered,
+    OcrAttempted,
+    OcrUnavailable,
+    OcrTimedOut,
+    OcrLowConfidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractionWarning {
+    pub code: ExtractionWarningCode,
+    pub message: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtractionOutput {
     pub path: Utf8PathBuf,
     pub mime: String,
     pub text: String,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<ExtractionWarning>,
     pub metadata: ExtractionMetadata,
 }
 
@@ -50,8 +61,6 @@ impl ExtractionOutput {
 
 pub struct Dispatcher {
     text: TextExtractor,
-    office: OfficeExtractor,
-    pdf: PdfExtractor,
 }
 
 impl Default for Dispatcher {
@@ -65,8 +74,6 @@ impl Dispatcher {
     pub fn new() -> Self {
         Self {
             text: TextExtractor,
-            office: OfficeExtractor,
-            pdf: PdfExtractor,
         }
     }
 
@@ -78,13 +85,6 @@ impl Dispatcher {
         let extension = path.extension().unwrap_or("").to_lowercase();
 
         match extension.as_str() {
-            "pdf" if config.enable_pdf => self.pdf.extract(path, config),
-            "docx" | "odt"
-                if (extension == "docx" && config.enable_docx)
-                    || (extension == "odt" && config.enable_odt) =>
-            {
-                self.office.extract(path, config)
-            }
             _ => {
                 // Fallback to text if it's a known config format or if sniffing suggests text
                 if is_text_format(&extension, config) {

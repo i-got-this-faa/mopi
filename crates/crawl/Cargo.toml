@@ -9,6 +9,7 @@ camino.workspace = true
 lss-config = { path = "../config" }
 notify = "8.0.0"
 notify-debouncer-full = "0.5.0"
+rayon = "1"
 serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }

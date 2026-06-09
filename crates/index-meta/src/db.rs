@@ -53,7 +53,11 @@ impl MetaStore {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
-             PRAGMA foreign_keys = ON;",
+             PRAGMA foreign_keys = ON;
+             PRAGMA cache_size = -64000;
+             PRAGMA mmap_size = 268435456;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA wal_autocheckpoint = 1000;",
         )?;
 
         let mut store = Self { conn };
@@ -609,6 +613,28 @@ impl MetaStore {
             params![status, detail, job_id],
         )?;
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Transaction support
+    // -----------------------------------------------------------------------
+
+    pub fn begin_transaction(&self) -> Result<(), MetaError> {
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(MetaError::from)
+    }
+
+    pub fn commit(&self) -> Result<(), MetaError> {
+        self.conn
+            .execute_batch("COMMIT")
+            .map_err(MetaError::from)
+    }
+
+    pub fn rollback(&self) -> Result<(), MetaError> {
+        self.conn
+            .execute_batch("ROLLBACK")
+            .map_err(MetaError::from)
     }
 
     // -----------------------------------------------------------------------

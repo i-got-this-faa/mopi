@@ -10,15 +10,15 @@ Last Updated: 2026-04-27
 Build a secure, blazing fast, accurate, modular local semantic search engine for local files with these mandatory capabilities:
 
 - search by name and content
-- support plain text and common config formats
-- support `docx`, `odt`, and `pdf`
+- natively support code and config files
+- handle git repositories exclusively
 - run embeddings fully locally
-- expose a daemon, GUI, and CLI
+- expose a daemon and an agent toolcall/MCP interface
 
 ## Fixed Architecture
 
 - Language: Rust
-- Binaries: `lssd`, `lssi`, `lssctl`
+- Binaries: `lssd`, `lssctl`
 - Lexical search: embedded index, content and name aware
 - Semantic search: fully local embeddings plus embedded ANN library
 - Metadata/state: SQLite
@@ -27,18 +27,17 @@ Build a secure, blazing fast, accurate, modular local semantic search engine for
 - Hidden files: ignored by default
 - Policies: whitelist and blacklist modes
 - Symlinks: fully followed with loop and duplicate suppression
-- PDF strategy: speed-first extraction
 
 ## Global Success Criteria
 
 - [x] `lssd` serves queries over a local Unix socket without remote network exposure.
 - [ ] Warm lexical queries return interactively fast on realistic corpora.
 - [ ] Warm hybrid queries return interactively fast on realistic corpora.
-- [ ] `lssi` shows progressive search results quickly enough to feel launcher-like.
+- [ ] Provides agent-friendly JSON toolcall interfaces via `lssctl`.
 - [ ] Name and content both materially influence ranking.
 - [ ] `filetype:` and `name:` work as soft metadata filters by default.
-- [x] Plain text and config files index correctly.
-- [ ] `docx`, `odt`, and `pdf` files index correctly.
+- [x] Code and config files index correctly.
+- [ ] Native git integration indexes git repositories effectively.
 - [x] Hidden files are excluded by default.
 - [x] Whitelist and blacklist policies are both implemented and tested.
 - [x] Symlink loops and duplicate-target paths do not create runaway indexing.
@@ -52,10 +51,8 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 
 - [ ] Warm daemon lexical query P50 under 60 ms on the reference development machine.
 - [ ] Warm daemon hybrid query P50 under 200 ms on the reference development machine.
-- [ ] `lssi` first visible results under 50 ms after a typical keystroke on a warm index.
 - [ ] Query embedding time stays within the interactive budget on the reference model.
 - [ ] Indexing unchanged files avoids expensive re-extraction and re-embedding.
-- [ ] PDF extraction path remains speed-first and does not block the full pipeline on slow documents.
 
 ## Workstream Index
 
@@ -69,8 +66,7 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 | Storage and indexing | `plans/06-storage-and-indexing.md` | IN PROGRESS | 01, 02, 03, 04, 05 |
 | Embeddings and vector search | `plans/07-embeddings-and-vector-search.md` | DONE | 01, 05, 06 |
 | Query, ranking, filters | `plans/08-query-ranking-and-filters.md` | IN PROGRESS | 02, 05, 06, 07 |
-| CLI | `plans/09-cli-lssctl.md` | NOT STARTED | 02, 03, 06, 08 |
-| GUI | `plans/10-lssi-gui.md` | IN PROGRESS | 02, 08 |
+| CLI & Agent Toolcalls | `plans/09-cli-lssctl.md` | NOT STARTED | 02, 03, 06, 08 |
 | Testing, benchmarks, hardening | `plans/11-testing-benchmarks-and-hardening.md` | NOT STARTED | 01-10 |
 | Observability, release, maintenance | `plans/12-observability-release-and-maintenance.md` | NOT STARTED | 01-11 |
 | Agent execution map | `plans/13-agent-execution-map.md` | IN PROGRESS | None |
@@ -100,12 +96,11 @@ These are target gates, not suggestions. If they are missed, the relevant subsys
 - [ ] Soft metadata filters influence ranking.
 - [x] Lexical-only fallback exists when the model is unavailable.
 
-### M3 Document Coverage And GUI
+### M3 Git and Agent Integration
 
-- [ ] `docx` extraction works.
-- [ ] `odt` extraction works.
-- [ ] Fast `pdf` extraction works.
-- [ ] `lssi` streams results from `lssd` with launcher-style UX.
+- [ ] Native parsing of `.git` to find indexable files and apply `.gitignore`.
+- [ ] `lssctl` exposes structured JSON toolcalls.
+- [ ] Agent integration tests (e.g. OpenCode) successfully invoke search.
 
 ### M4 Hardening And Release Readiness
 

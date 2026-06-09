@@ -18,7 +18,19 @@ pub fn parse_query(raw: impl Into<String>) -> SearchQuery {
         }
     }
 
-    query.terms = terms.join(" ");
+    let stop_words = [
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "if", "in", "into", "is",
+        "it", "no", "not", "of", "on", "or", "such", "that", "the", "their", "then", "there",
+        "these", "they", "this", "to", "was", "will", "with", "where", "how", "what", "who",
+        "why", "when", "can", "do", "does",
+    ];
+
+    let filtered_terms: Vec<&str> = terms
+        .into_iter()
+        .filter(|t| !stop_words.contains(&t.to_lowercase().as_str()))
+        .collect();
+
+    query.terms = filtered_terms.join(" ");
     query
 }
 

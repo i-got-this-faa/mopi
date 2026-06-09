@@ -1,7 +1,9 @@
 [workspace]
 members = [
+    "benches",
     "bin/lssctl",
-    "bin/lssd", "bin/lssi", "crates/chunking",
+    "bin/lssd",
+    "crates/chunking",
     "crates/config",
     "crates/crawl",
     "crates/embed",
@@ -26,6 +28,7 @@ version = "0.1.0"
 anyhow = "1.0.100"
 camino = { version = "1.1.9", features = ["serde1"] }
 directories = "5.0.1"
+criterion = { version = "0.5", features = ["async_futures"] }
 globset = "0.4.18"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
@@ -36,7 +39,14 @@ toml = "0.9.8"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 uuid = { version = "1.18.1", features = ["serde", "v7"] }
+rand = "0.9"
 tempfile = "3.23.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+# Keep panic = "unwind" for better error reporting
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

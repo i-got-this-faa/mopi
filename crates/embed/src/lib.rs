@@ -46,6 +46,7 @@ pub mod provider {
         tokenizer: Tokenizer,
         session: Session,
         need_token_type_ids: bool,
+        indexing_batch_size: usize,
     }
 
     struct ModelArtifacts {
@@ -87,22 +88,26 @@ pub mod provider {
             let session_started_at = Instant::now();
             info!(
                 model_file = %artifacts.model_path.display(),
-                optimization = "Level1",
+                optimization = "Level3",
                 backend = %config.backend,
                 "embedder ORT session creation started"
             );
 
+            // Use embedding_concurrency for intra/inter thread counts
+            let intra_threads = config.indexing_batch_size.min(4).max(1);
+            let inter_threads = 1;
+
             let mut builder = Session::builder()
                 .map_err(to_embed_error)?
-                .with_optimization_level(GraphOptimizationLevel::Level1)
+                .with_optimization_level(GraphOptimizationLevel::Level3)
                 .map_err(|e| EmbedError::Generation(e.to_string()))?
-                .with_intra_threads(1)
+                .with_intra_threads(intra_threads)
                 .map_err(|e| EmbedError::Generation(e.to_string()))?
-                .with_inter_threads(1)
+                .with_inter_threads(inter_threads)
                 .map_err(|e| EmbedError::Generation(e.to_string()))?
-                .with_parallel_execution(false)
+                .with_parallel_execution(intra_threads > 1)
                 .map_err(|e| EmbedError::Generation(e.to_string()))?
-                .with_memory_pattern(false)
+                .with_memory_pattern(true)
                 .map_err(|e| EmbedError::Generation(e.to_string()))?;
 
             // Configure execution provider based on backend selection
@@ -111,13 +116,18 @@ pub mod provider {
                     info!("configuring CUDA execution provider");
                     builder = builder
                         .with_execution_providers([
-                            ort::ep::CUDA::default().build().error_on_failure(),
+                            ort::ep::CUDA::default()
+                                .with_memory_limit(1 * 1024 * 1024 * 1024)
+                                .build()
+                                .error_on_failure(),
                         ])
                         .map_err(|e| EmbedError::Generation(format!("CUDA init failed: {e}")))?;
                 }
                 "auto" => {
                     // Try CUDA, silently fall back to CPU
-                    let cuda_ep = ort::ep::CUDA::default().build();
+                    let cuda_ep = ort::ep::CUDA::default()
+                        .with_memory_limit(1 * 1024 * 1024 * 1024)
+                        .build();
                     info!("auto-detecting execution providers: trying CUDA");
                     builder = builder
                         .with_execution_providers([cuda_ep])
@@ -149,6 +159,7 @@ pub mod provider {
                 tokenizer,
                 session,
                 need_token_type_ids,
+                indexing_batch_size: config.indexing_batch_size,
             })
         }
     }
@@ -160,7 +171,7 @@ pub mod provider {
         }
 
         fn embed_chunks(&mut self, chunks: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
-            self.embed_internal(chunks, None)
+            self.embed_internal(chunks, Some(self.indexing_batch_size))
         }
     }
 

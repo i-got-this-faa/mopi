@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -65,9 +65,10 @@ async fn main() -> Result<()> {
 
     let meta = MetaStore::open(meta_path.as_std_path())?;
     let lexical = LexicalStore::open(&lexical_path)?;
+    let max_vectors = config.indexing.max_vectors;
     let vector = match VectorIndex::load(vector_path.as_std_path(), "hnsw") {
         Ok(v) => Some(v),
-        Err(_) => Some(VectorIndex::new(384, 16)), // AllMiniLML6V2 is 384d
+        Err(_) => Some(VectorIndex::new(384, 16, max_vectors)),
     };
 
     let (tx, rx) = mpsc::channel(100);
@@ -228,6 +229,24 @@ async fn handle_client(mut stream: UnixStream, status: SharedStatus) -> Result<(
         match envelope.request {
             Request::Search { query_id, query } => {
                 handle_streaming_search(&mut stream, &status, query_id, query).await?;
+            }
+            Request::GrepQuery {
+                query_id,
+                pattern,
+                case_sensitive,
+                limit,
+                filetype_filters,
+            } => {
+                handle_streaming_grep(
+                    &mut stream,
+                    &status,
+                    query_id,
+                    pattern,
+                    case_sensitive,
+                    limit,
+                    filetype_filters,
+                )
+                .await?;
             }
             Request::CancelSearch { query_id } => {
                 // In the cancel-and-resubmit pattern (used by lssi on each keystroke),
@@ -404,6 +423,141 @@ async fn run_streaming_search(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn handle_streaming_grep(
+    stream: &mut UnixStream,
+    state: &SharedStatus,
+    query_id: QueryId,
+    pattern: String,
+    case_sensitive: bool,
+    limit: usize,
+    filetype_filters: Vec<String>,
+) -> Result<()> {
+    let cancel_token = CancellationToken::new();
+    {
+        if let Ok(mut searches) = state.active_searches.lock() {
+            searches.insert(query_id, cancel_token.clone());
+        }
+    }
+
+    let result = run_streaming_grep(
+        stream, state, query_id, pattern, case_sensitive, limit, filetype_filters,
+        &cancel_token,
+    )
+    .await;
+
+    {
+        if let Ok(mut searches) = state.active_searches.lock() {
+            searches.remove(&query_id);
+        }
+    }
+
+    result
+}
+
+fn match_line(
+    line: &str,
+    pattern: &str,
+    case_sensitive: bool,
+) -> bool {
+    if case_sensitive {
+        line.contains(pattern)
+    } else {
+        line.to_lowercase().contains(&pattern.to_lowercase())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_streaming_grep(
+    stream: &mut UnixStream,
+    state: &SharedStatus,
+    query_id: QueryId,
+    pattern: String,
+    case_sensitive: bool,
+    limit: usize,
+    filetype_filters: Vec<String>,
+    cancel_token: &CancellationToken,
+) -> Result<()> {
+    let candidates = match state.lexical.lock() {
+        Ok(lexical) => match lexical.search_content(&pattern, limit * 2) {
+            Ok(results) => results,
+            Err(e) => {
+                warn!("grep lexical search failed: {}", e);
+                Vec::new()
+            }
+        },
+        Err(_) => {
+            warn!("lexical store mutex poisoned");
+            Vec::new()
+        }
+    };
+
+    let mut total_sent = 0usize;
+    let limit = limit.max(1);
+
+    for (_id, path, content) in &candidates {
+        if cancel_token.is_cancelled() {
+            break;
+        }
+
+        // Apply filetype filter if specified
+        if !filetype_filters.is_empty() {
+            let ext = std::path::Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if !filetype_filters.iter().any(|f| f == ext) {
+                continue;
+            }
+        }
+
+        let mut file_matches = Vec::new();
+        for (linenum, line) in content.lines().enumerate() {
+            if total_sent + file_matches.len() >= limit {
+                break;
+            }
+            if match_line(line, &pattern, case_sensitive) {
+                file_matches.push(lss_types::GrepMatch {
+                    path: camino::Utf8PathBuf::from(path),
+                    line_number: linenum + 1,
+                    line: line.to_string(),
+                });
+            }
+        }
+
+        if !file_matches.is_empty() {
+            let remaining = limit.saturating_sub(total_sent);
+            let chunk: Vec<_> = file_matches.into_iter().take(remaining).collect();
+            total_sent += chunk.len();
+            write_frame(
+                stream,
+                &ResponseEnvelope::new(Response::GrepChunk {
+                    query_id,
+                    matches: chunk,
+                    is_final: false,
+                }),
+            )
+            .await?;
+
+            if total_sent >= limit {
+                break;
+            }
+        }
+    }
+
+    write_frame(
+        stream,
+        &ResponseEnvelope::new(Response::GrepChunk {
+            query_id,
+            matches: Vec::new(),
+            is_final: true,
+        }),
+    )
+    .await?;
+
+    Ok(())
+}
+
 type SharedStatus = Arc<SharedState>;
 
 async fn dispatch_simple_request(request: Request, state: &SharedStatus) -> Response {
@@ -481,7 +635,9 @@ async fn dispatch_simple_request(request: Request, state: &SharedStatus) -> Resp
             }
         }
         Request::Doctor => Response::Doctor(build_doctor_report(state).await),
-        Request::Search { .. } | Request::CancelSearch { .. } => Response::Error {
+        Request::Search { .. }
+        | Request::CancelSearch { .. }
+        | Request::GrepQuery { .. } => Response::Error {
             message: String::from("search requests should be handled via streaming path"),
         },
     }
@@ -491,11 +647,31 @@ async fn run_indexer(state: SharedStatus, mut rx: mpsc::Receiver<Vec<lss_crawl::
     info!("indexer worker started");
     while let Some(events) = rx.recv().await {
         info!("indexer received {} events", events.len());
+
+        let concurrency = {
+            let config = state.config.read().await;
+            config.indexing.extraction_concurrency
+        };
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+
+        let mut handles = Vec::with_capacity(events.len());
         for event in events {
-            if let Err(e) = process_change_event(&state, event).await {
-                error!(error = %e, "failed to process change event");
+            let s = Arc::clone(&semaphore);
+            let state = Arc::clone(&state);
+            handles.push(tokio::spawn(async move {
+                let _permit = s.acquire_owned().await.expect("semaphore closed");
+                if let Err(e) = process_change_event(&state, event).await {
+                    error!(error = %e, "failed to process change event");
+                }
+            }));
+        }
+
+        for handle in handles {
+            if let Err(e) = handle.await {
+                error!(error = %e, "event processing task panicked");
             }
         }
+
         info!("committing lexical index...");
         match state.lexical.lock() {
             Ok(mut lexical) => {
@@ -558,203 +734,58 @@ async fn process_change_event_inner(
                     .map(|root| root.path.clone())
                     .ok_or_else(|| anyhow!("invalid crawl root id {}", candidate.root_id))?;
 
-                let journal_id: Option<i64>;
+                // Phase 1: extraction + chunking (no locks needed)
+                let output = state.dispatcher.extract(&candidate.canonical_path, &config)?;
+                info!(path = %candidate.canonical_path, "extraction successful");
+                let chunker = Chunker::default();
+                let chunks = chunker.chunk(&output.text);
+                let chunk_texts: Vec<String> = chunks.iter().map(|chunk| {
+                    let ext_name = match candidate.extension.as_deref() {
+                        Some("rs") => "Rust",
+                        Some("py") => "Python",
+                        Some("js") => "JavaScript",
+                        Some("ts") => "TypeScript",
+                        Some("go") => "Go",
+                        Some("c") => "C",
+                        Some("cpp") => "C++",
+                        Some("md") => "Markdown",
+                        Some(ext) => ext,
+                        None => "Text",
+                    };
+                    format!("File Path: {}\nFile Type: {} File\n\n{}", candidate.canonical_path, ext_name, chunk.text)
+                }).collect();
 
-                match state.dispatcher.extract(&candidate.canonical_path, &config) {
-                    Ok(output) => {
-                        info!(path = %candidate.canonical_path, "extraction successful");
-                        let existing_id = state
-                            .meta
-                            .lock()
-                            .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                            .get_file_by_canonical_path(candidate.canonical_path.as_str())?;
-                        let doc_id = match existing_id.as_deref() {
-                            Some(id) => lss_types::DocumentId(uuid::Uuid::parse_str(id).map_err(
-                                |error| anyhow!("invalid stored document id `{id}`: {error}"),
-                            )?),
-                            None => lss_types::DocumentId::new(),
-                        };
-                        let doc_id_str = doc_id.0.to_string();
-                        let root_id = state
-                            .meta
-                            .lock()
-                            .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                            .upsert_root(root_path.as_str())?;
+                // Phase 2: all DB writes within one transaction (hold meta lock)
+                let meta_result: Result<()> = {
+                    let meta = state
+                        .meta
+                        .lock()
+                        .map_err(|_| anyhow!("meta store mutex poisoned"))?;
+                    meta.begin_transaction()?;
 
-                        // Create journal entry
-                        journal_id = Some(
-                            state
-                                .meta
-                                .lock()
-                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                                .create_journal_entry(&doc_id_str, candidate.canonical_path.as_str())?,
-                        );
+                    let result = write_file_to_index(
+                        state, &meta, candidate, &root_path, &output,
+                        &chunks, &chunk_texts,
+                    );
 
-                        if let Some(id) = existing_id.as_deref() {
-                            state
-                                .lexical
-                                .lock()
-                                .map_err(|_| anyhow!("lexical store mutex poisoned"))?
-                                .delete_document(id)?;
-
-                            // Delete from vector index
-                            let chunk_ids = state
-                                .meta
-                                .lock()
-                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                                .get_chunks_for_file(id)?;
-                            if let Ok(mut vector) = state.vector.lock() {
-                                if let Some(v) = vector.as_mut() {
-                                    let chunk_ids_usize: Vec<usize> =
-                                        chunk_ids.into_iter().map(|id| id as usize).collect();
-                                    let _ = v.delete_chunks(&chunk_ids_usize);
-                                }
+                    match &result {
+                        Ok(()) => {
+                            if let Err(e) = meta.commit() {
+                                error!(error = %e, "failed to commit transaction");
                             }
                         }
-
-                        state
-                            .meta
-                            .lock()
-                            .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                            .upsert_file(FileRecord {
-                                id: &doc_id,
-                                root_id,
-                                canonical_path: candidate.canonical_path.as_str(),
-                                file_name: &candidate.file_name,
-                                extension: candidate.extension.as_deref(),
-                                size: candidate.file_size,
-                                modified_unix_seconds: candidate.modified_unix_seconds,
-                            })?;
-
-                        if let Some(jid) = journal_id {
-                            state
-                                .meta
-                                .lock()
-                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                                .advance_journal_stage(jid, "lexical")?;
-                        }
-
-                        for alias in &candidate.alias_paths {
-                            state
-                                .meta
-                                .lock()
-                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                                .upsert_alias(&doc_id_str, alias.as_str())?;
-                        }
-
-                        let alias_slices: Vec<&str> =
-                            candidate.alias_paths.iter().map(|p| p.as_str()).collect();
-
-                        state
-                            .lexical
-                            .lock()
-                            .map_err(|_| anyhow!("lexical store mutex poisoned"))?
-                            .add_document(
-                                &doc_id_str,
-                                candidate.canonical_path.as_str(),
-                                &alias_slices,
-                                &candidate.file_name,
-                                &output.text,
-                                candidate.extension.as_deref(),
-                                Some(&output.mime),
-                            )?;
-
-                        if let Some(jid) = journal_id {
-                            state
-                                .meta
-                                .lock()
-                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                                .advance_journal_stage(jid, "vector")?;
-                        }
-
-                        let chunker = Chunker::default();
-                        let chunks = chunker.chunk(&output.text);
-                        let mut chunk_data = Vec::new();
-
-                        info!(path = %candidate.canonical_path, chunk_count = chunks.len(), "chunking complete");
-                        let chunk_texts: Vec<String> =
-                            chunks.iter().map(|chunk| chunk.text.clone()).collect();
-                        let sqlite_chunk_ids = state
-                            .meta
-                            .lock()
-                            .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                            .replace_chunks(&doc_id_str, &chunk_texts)?;
-                        state
-                            .meta
-                            .lock()
-                            .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                            .set_extractor_status(&doc_id_str, "done")?;
-                        info!(path = %candidate.canonical_path, "chunks stored in metadata db");
-
-                        match state.embedder.lock() {
-                            Ok(mut embedder_guard) => {
-                                if let Some(embedder) = embedder_guard.as_mut() {
-                                    info!(path = %candidate.canonical_path, "generating embeddings...");
-                                    let text_slices: Vec<&str> =
-                                        chunks.iter().map(|c| c.text.as_str()).collect();
-                                    match embedder.embed_chunks(&text_slices) {
-                                        Ok(embeddings) => {
-                                            if embeddings.len() != sqlite_chunk_ids.len() {
-                                                warn!(
-                                                    path = %candidate.canonical_path,
-                                                    expected = sqlite_chunk_ids.len(),
-                                                    actual = embeddings.len(),
-                                                    "embedding batch size mismatch"
-                                                );
-                                            }
-                                            info!(path = %candidate.canonical_path, "embeddings generated");
-
-                                            // Persist embeddings to SQLite for crash recovery
-                                            if let Ok(meta) = state.meta.lock() {
-                                                let _ = meta.store_chunk_embeddings(
-                                                    &sqlite_chunk_ids,
-                                                    &embeddings,
-                                                );
-                                            }
-
-                                            for (chunk_id, embedding) in
-                                                sqlite_chunk_ids.iter().zip(embeddings)
-                                            {
-                                                chunk_data.push((*chunk_id as usize, embedding));
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!(path = %candidate.canonical_path, error = %e, "embedding failed");
-                                        }
-                                    }
-                                } else {
-                                    info!(path = %candidate.canonical_path, "embedder unavailable, skipping semantic index");
-                                }
-                            }
-                            Err(_) => {
-                                warn!(path = %candidate.canonical_path, "embedder mutex poisoned, skipping semantic index");
+                        Err(_) => {
+                            if let Err(e) = meta.rollback() {
+                                warn!(error = %e, "transaction rollback failed");
                             }
                         }
+                    }
 
-                        if !chunk_data.is_empty() {
-                            if let Ok(mut vector) = state.vector.lock() {
-                                if let Some(v) = vector.as_mut() {
-                                    info!(path = %candidate.canonical_path, "upserting to vector index...");
-                                    if let Err(e) = v.upsert_chunks(&chunk_data) {
-                                        warn!(path = %candidate.canonical_path, error = %e, "vector upsert failed");
-                                    }
-                                    info!(path = %candidate.canonical_path, "vector upsert complete");
-                                }
-                            }
-                        }
+                    result
+                };
 
-                        // Update ingest tracking
-                        if let Ok(meta) = state.meta.lock() {
-                            let _ = meta.update_ingest_time(&doc_id_str);
-                        }
-
-                        // Complete journal (deletes the entry)
-                        if let Some(jid) = journal_id {
-                            if let Ok(meta) = state.meta.lock() {
-                                let _ = meta.complete_journal_entry(jid);
-                            }
-                        }
-
+                match meta_result {
+                    Ok(()) => {
                         update_snapshot_for_event(
                             state,
                             ChangeEvent {
@@ -765,8 +796,16 @@ async fn process_change_event_inner(
                         )
                         .await;
 
-                        if event.kind == ChangeKind::Added && existing_id.is_none() {
-                            state.status.write().await.indexed_documents += 1;
+                        if event.kind == ChangeKind::Added {
+                            let is_new = state
+                                .meta
+                                .lock()
+                                .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                                .get_file_by_canonical_path(candidate.canonical_path.as_str())?
+                                .is_some();
+                            if is_new {
+                                state.status.write().await.indexed_documents += 1;
+                            }
                         }
                     }
                     Err(e) => {
@@ -779,17 +818,27 @@ async fn process_change_event_inner(
             }
         }
         ChangeKind::Deleted => {
-            let id_opt = state
-                .meta
-                .lock()
-                .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                .get_file_by_canonical_path(event.canonical_path.as_str())?;
-            if let Some(id_str) = id_opt {
-                // Journal the deletion for crash recovery
-                let journal_id = state
+            let (id_str, _path_str) = {
+                let meta = state
                     .meta
                     .lock()
-                    .map_err(|_| anyhow!("meta store mutex poisoned"))?
+                    .map_err(|_| anyhow!("meta store mutex poisoned"))?;
+                let id_opt = meta.get_file_by_canonical_path(event.canonical_path.as_str())?;
+                match id_opt {
+                    Some(id) => (id, event.canonical_path.clone()),
+                    None => return Ok(()),
+                }
+            };
+
+            // All deletion operations within one transaction
+            let delete_result: Result<()> = {
+                let meta = state
+                    .meta
+                    .lock()
+                    .map_err(|_| anyhow!("meta store mutex poisoned"))?;
+                meta.begin_transaction()?;
+
+                let journal_id = meta
                     .create_journal_entry(&id_str, event.canonical_path.as_str())
                     .ok();
 
@@ -800,44 +849,186 @@ async fn process_change_event_inner(
                     .delete_document(&id_str)?;
 
                 if let Some(jid) = journal_id {
-                    let _ = state
-                        .meta
-                        .lock()
-                        .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                        .advance_journal_stage(jid, "lexical");
+                    let _ = meta.advance_journal_stage(jid, "lexical");
                 }
 
-                {
-                    let meta = state
-                        .meta
-                        .lock()
-                        .map_err(|_| anyhow!("meta store mutex poisoned"))?;
-                    if let Ok(chunk_ids) = meta.get_chunks_for_file(&id_str) {
-                        if let Ok(mut vector) = state.vector.lock() {
-                            if let Some(v) = vector.as_mut() {
-                                let chunk_ids_usize: Vec<usize> =
-                                    chunk_ids.into_iter().map(|id| id as usize).collect();
-                                let _ = v.delete_chunks(&chunk_ids_usize);
-                            }
+                if let Ok(chunk_ids) = meta.get_chunks_for_file(&id_str) {
+                    if let Ok(mut vector) = state.vector.lock() {
+                        if let Some(v) = vector.as_mut() {
+                            let chunk_ids_usize: Vec<usize> =
+                                chunk_ids.into_iter().map(|id| id as usize).collect();
+                            let _ = v.delete_chunks(&chunk_ids_usize);
                         }
                     }
-                    meta.delete_file(&id_str)?;
                 }
+
+                meta.delete_file(&id_str)?;
 
                 if let Some(jid) = journal_id {
-                    let _ = state
-                        .meta
-                        .lock()
-                        .map_err(|_| anyhow!("meta store mutex poisoned"))?
-                        .complete_journal_entry(jid);
+                    let _ = meta.complete_journal_entry(jid);
                 }
 
-                update_snapshot_for_event(state, event.clone()).await;
-                let mut status = state.status.write().await;
-                status.indexed_documents = status.indexed_documents.saturating_sub(1);
-            }
+                if let Err(e) = meta.commit() {
+                    error!(error = %e, "delete transaction commit failed");
+                }
+
+                Ok(())
+            };
+            let _ = delete_result;
+
+            update_snapshot_for_event(state, event.clone()).await;
+            let mut status = state.status.write().await;
+            status.indexed_documents = status.indexed_documents.saturating_sub(1);
         }
         ChangeKind::Unchanged => {}
+    }
+
+    Ok(())
+}
+
+fn write_file_to_index(
+    state: &SharedStatus,
+    meta: &MetaStore,
+    candidate: &lss_crawl::CrawlCandidate,
+    root_path: &camino::Utf8PathBuf,
+    output: &lss_extract::ExtractionOutput,
+    chunks: &[lss_chunking::Chunk],
+    chunk_texts: &[String],
+) -> Result<()> {
+    let existing_id = meta.get_file_by_canonical_path(candidate.canonical_path.as_str())?;
+    let doc_id = match existing_id.as_deref() {
+        Some(id) => lss_types::DocumentId(uuid::Uuid::parse_str(id).map_err(
+            |error| anyhow!("invalid stored document id `{id}`: {error}"),
+        )?),
+        None => lss_types::DocumentId::new(),
+    };
+    let doc_id_str = doc_id.0.to_string();
+    let root_id = meta.upsert_root(root_path.as_str())?;
+
+    let journal_id = Some(
+        meta.create_journal_entry(&doc_id_str, candidate.canonical_path.as_str())?,
+    );
+
+    if let Some(id) = existing_id.as_deref() {
+        state
+            .lexical
+            .lock()
+            .map_err(|_| anyhow!("lexical store mutex poisoned"))?
+            .delete_document(id)?;
+
+        let file_chunk_ids = meta.get_chunks_for_file(id)?;
+        if let Ok(mut vector) = state.vector.lock() {
+            if let Some(v) = vector.as_mut() {
+                let chunk_ids_usize: Vec<usize> =
+                    file_chunk_ids.into_iter().map(|id| id as usize).collect();
+                let _ = v.delete_chunks(&chunk_ids_usize);
+            }
+        }
+    }
+
+    meta.upsert_file(FileRecord {
+        id: &doc_id,
+        root_id,
+        canonical_path: candidate.canonical_path.as_str(),
+        file_name: &candidate.file_name,
+        extension: candidate.extension.as_deref(),
+        size: candidate.file_size,
+        modified_unix_seconds: candidate.modified_unix_seconds,
+    })?;
+
+    if let Some(jid) = journal_id {
+        meta.advance_journal_stage(jid, "lexical")?;
+    }
+
+    for alias in &candidate.alias_paths {
+        meta.upsert_alias(&doc_id_str, alias.as_str())?;
+    }
+
+    let alias_slices: Vec<&str> =
+        candidate.alias_paths.iter().map(|p| p.as_str()).collect();
+
+    state
+        .lexical
+        .lock()
+        .map_err(|_| anyhow!("lexical store mutex poisoned"))?
+        .add_document(
+            &doc_id_str,
+            candidate.canonical_path.as_str(),
+            &alias_slices,
+            &candidate.file_name,
+            &output.text,
+            candidate.extension.as_deref(),
+            Some(&output.mime),
+        )?;
+
+    if let Some(jid) = journal_id {
+        meta.advance_journal_stage(jid, "vector")?;
+    }
+
+    let mut chunk_data = Vec::new();
+
+    let sqlite_chunk_ids = meta.replace_chunks(&doc_id_str, chunk_texts)?;
+    meta.set_extractor_status(&doc_id_str, "done")?;
+    info!(path = %candidate.canonical_path, "chunks stored in metadata db");
+
+    match state.embedder.lock() {
+        Ok(mut embedder_guard) => {
+            if let Some(embedder) = embedder_guard.as_mut() {
+                info!(path = %candidate.canonical_path, "generating embeddings...");
+                let text_slices: Vec<&str> =
+                    chunks.iter().map(|c| c.text.as_str()).collect();
+                match embedder.embed_chunks(&text_slices) {
+                    Ok(embeddings) => {
+                        if embeddings.len() != sqlite_chunk_ids.len() {
+                            warn!(
+                                path = %candidate.canonical_path,
+                                expected = sqlite_chunk_ids.len(),
+                                actual = embeddings.len(),
+                                "embedding batch size mismatch"
+                            );
+                        }
+                        info!(path = %candidate.canonical_path, "embeddings generated");
+
+                        let _ = meta.store_chunk_embeddings(
+                            &sqlite_chunk_ids,
+                            &embeddings,
+                        );
+
+                        for (chunk_id, embedding) in
+                            sqlite_chunk_ids.iter().zip(embeddings)
+                        {
+                            chunk_data.push((*chunk_id as usize, embedding));
+                        }
+                    }
+                    Err(e) => {
+                        warn!(path = %candidate.canonical_path, error = %e, "embedding failed");
+                    }
+                }
+            } else {
+                info!(path = %candidate.canonical_path, "embedder unavailable, skipping semantic index");
+            }
+        }
+        Err(_) => {
+            warn!(path = %candidate.canonical_path, "embedder mutex poisoned, skipping semantic index");
+        }
+    }
+
+    if !chunk_data.is_empty() {
+        if let Ok(mut vector) = state.vector.lock() {
+            if let Some(v) = vector.as_mut() {
+                info!(path = %candidate.canonical_path, "upserting to vector index...");
+                if let Err(e) = v.upsert_chunks(&chunk_data) {
+                    warn!(path = %candidate.canonical_path, error = %e, "vector upsert failed");
+                }
+                info!(path = %candidate.canonical_path, "vector upsert complete");
+            }
+        }
+    }
+
+    meta.update_ingest_time(&doc_id_str)?;
+
+    if let Some(jid) = journal_id {
+        meta.complete_journal_entry(jid)?;
     }
 
     Ok(())
@@ -1054,7 +1245,7 @@ async fn run_crawler(
     }
 
     let changes = lss_crawl::discover_changes(&config, None)?;
-    *state.snapshot.write().await = Some(changes.snapshot.clone());
+    *state.snapshot.write().await = Some(changes.snapshot);
     let events: Vec<_> = changes
         .events
         .into_iter()
@@ -1113,8 +1304,10 @@ async fn run_watcher(
 
 async fn refresh_changed(state: &SharedStatus) -> Result<usize> {
     let config = state.config.read().await.clone();
-    let previous_snapshot = state.snapshot.read().await.clone();
-    let changes = lss_crawl::discover_changes(&config, previous_snapshot.as_ref())?;
+    let changes = {
+        let previous_snapshot = state.snapshot.read().await;
+        lss_crawl::discover_changes(&config, previous_snapshot.as_ref())?
+    };
     let event_count = changes
         .events
         .iter()

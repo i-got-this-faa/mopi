@@ -194,53 +194,85 @@ pub fn diff_snapshots(
 }
 
 pub fn discover_files(config: &AppConfig) -> Result<CrawlOutput, CrawlError> {
+    use rayon::prelude::*;
+
     let matcher = config.policy.matcher()?;
-    let mut canonical_to_candidate = std::collections::BTreeMap::new();
-    let mut skipped_duplicates = 0;
 
-    for (root_id, root) in config.roots.iter().enumerate() {
-        for entry in WalkDir::new(root.path.as_std_path())
-            .follow_links(true)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
+    let per_root: Vec<_> = config
+        .roots
+        .par_iter()
+        .enumerate()
+        .map(|(root_id, root)| {
+            let mut candidates = Vec::new();
+            let mut skipped = 0usize;
 
-            let observed_path = utf8(entry.path())?;
-            let relative_path = observed_path
-                .strip_prefix(&root.path)
-                .unwrap_or(observed_path.as_path());
+            for entry in WalkDir::new(root.path.as_std_path())
+                .follow_links(true)
+                .into_iter()
+                .filter_map(Result::ok)
+            {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
 
-            if !matcher.allows(relative_path) {
-                continue;
-            }
+                let observed_path = utf8(entry.path())?;
+                let relative_path = observed_path
+                    .strip_prefix(&root.path)
+                    .unwrap_or(observed_path.as_path());
 
-            match resolve_candidate(root_id, &root.path, &observed_path) {
-                Ok(mut candidate) => {
-                    let is_alias = candidate.canonical_path != candidate.observed_path;
-                    if let Some(existing) =
-                        canonical_to_candidate.get_mut(&candidate.canonical_path)
-                    {
-                        let existing: &mut CrawlCandidate = existing;
-                        if is_alias {
-                            existing.alias_paths.push(candidate.observed_path.clone());
+                if !matcher.allows(relative_path) {
+                    continue;
+                }
+
+                match resolve_candidate(root_id, &root.path, &observed_path) {
+                    Ok(mut candidate) => {
+                        let is_alias = candidate.canonical_path != candidate.observed_path;
+                        let existing_idx = candidates.iter().position(|c: &CrawlCandidate| {
+                            c.canonical_path == candidate.canonical_path
+                        });
+                        if let Some(idx) = existing_idx {
+                            let existing = &mut candidates[idx];
+                            if is_alias {
+                                existing.alias_paths.push(candidate.observed_path.clone());
+                            } else {
+                                existing.observed_path = candidate.observed_path.clone();
+                            }
+                            skipped += 1;
                         } else {
-                            existing.observed_path = candidate.observed_path.clone();
+                            if is_alias {
+                                candidate.alias_paths.push(candidate.observed_path.clone());
+                            }
+                            candidates.push(candidate);
                         }
-                        skipped_duplicates += 1;
-                    } else {
-                        if is_alias {
-                            candidate.alias_paths.push(candidate.observed_path.clone());
-                        }
-                        canonical_to_candidate.insert(candidate.canonical_path.clone(), candidate);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to resolve candidate for {}: {}", observed_path, e);
                     }
                 }
-                Err(e) => {
-                    // Log error but continue walking
-                    tracing::warn!("Failed to resolve candidate for {}: {}", observed_path, e);
+            }
+
+            Ok::<_, CrawlError>((candidates, skipped))
+        })
+        .collect();
+
+    let mut canonical_to_candidate: std::collections::BTreeMap<Utf8PathBuf, CrawlCandidate> =
+        std::collections::BTreeMap::new();
+    let mut total_skipped = 0;
+
+    for result in per_root {
+        let (root_candidates, skipped) = result?;
+        total_skipped += skipped;
+        for candidate in root_candidates {
+            let is_alias = candidate.canonical_path != candidate.observed_path;
+            if let Some(existing) = canonical_to_candidate.get_mut(&candidate.canonical_path) {
+                if is_alias {
+                    existing.alias_paths.push(candidate.observed_path.clone());
+                } else {
+                    existing.observed_path = candidate.observed_path.clone();
                 }
+                total_skipped += 1;
+            } else {
+                canonical_to_candidate.insert(candidate.canonical_path.clone(), candidate);
             }
         }
     }
@@ -249,7 +281,7 @@ pub fn discover_files(config: &AppConfig) -> Result<CrawlOutput, CrawlError> {
 
     Ok(CrawlOutput {
         candidates,
-        skipped_duplicates,
+        skipped_duplicates: total_skipped,
     })
 }
 

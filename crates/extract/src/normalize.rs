@@ -1,17 +1,18 @@
 /// Normalizes text by converting line endings to `\n` and removing NUL bytes.
 /// This ensures consistent indexing and prevents issues with some indexers.
 pub fn normalize_text(text: &str) -> String {
-    let mut normalized = String::with_capacity(text.len());
-
-    for c in text.chars() {
-        if c == '\0' {
-            continue;
-        }
-        normalized.push(c);
+    // Fast path: no NUL bytes and no \r\n sequences
+    if !text.contains('\0') && !text.contains("\r\n") {
+        return text.to_string();
     }
 
-    // Normalize line endings (\r\n -> \n)
-    normalized.replace("\r\n", "\n")
+    // Remove NUL bytes first, then normalize \r\n -> \n in a single pass
+    let filtered: String = text.chars().filter(|&c| c != '\0').collect();
+    if filtered.contains("\r\n") {
+        filtered.replace("\r\n", "\n")
+    } else {
+        filtered
+    }
 }
 
 #[cfg(test)]

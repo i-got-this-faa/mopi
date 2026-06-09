@@ -27,44 +27,56 @@ impl Chunker {
             return Vec::new();
         }
 
-        let mut chunks = Vec::new();
-        let chars: Vec<char> = text.chars().collect();
-        let mut start = 0;
+        // Pre-compute char offsets: byte position for each character index.
+        // This is a Vec<usize> (8 bytes/entry) vs Vec<char> (4 bytes/entry),
+        // but avoids the re-encode cost when collecting chunk strings.
+        let offsets: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+        let total_chars = offsets.len();
+        let estimated_chunks = total_chars / self.max_chars + 1;
+        let mut chunks = Vec::with_capacity(estimated_chunks);
 
-        while start < chars.len() {
-            let end = (start + self.max_chars).min(chars.len());
+        let mut start_char = 0;
 
-            // Try to find a nice boundary like a newline if we are not at the end
-            let mut break_point = end;
-            if end < chars.len() {
-                // look backwards from end up to overlap_chars for a newline or space
-                let search_start = end.saturating_sub(self.overlap_chars).max(start + 1);
-                if let Some(pos) = chars[search_start..end].iter().rposition(|&c| c == '\n') {
-                    break_point = search_start + pos + 1; // include the newline
-                } else if let Some(pos) = chars[search_start..end].iter().rposition(|&c| c == ' ') {
-                    break_point = search_start + pos + 1; // break at space
+        while start_char < total_chars {
+            let end_char = (start_char + self.max_chars).min(total_chars);
+            let mut break_char = end_char;
+            if end_char < total_chars {
+                let search_start = end_char.saturating_sub(self.overlap_chars).max(start_char + 1);
+                for c in (search_start..end_char).rev() {
+                    let byte_off = offsets[c];
+                    let ch = text.as_bytes()[byte_off] as char;
+                    if ch == '\n' {
+                        break_char = c + 1;
+                        break;
+                    }
+                    if ch == ' ' && break_char == end_char {
+                        break_char = c + 1;
+                    }
                 }
             }
 
-            let chunk_text: String = chars[start..break_point].iter().collect();
+            let start_byte = offsets[start_char];
+            let break_byte = if break_char == total_chars { text.len() } else { offsets[break_char] };
+            let chunk_text = text[start_byte..break_byte].to_string();
             chunks.push(Chunk {
                 text: chunk_text,
-                start_char: start,
-                end_char: break_point,
+                start_char,
+                end_char: break_char,
             });
 
-            if break_point == chars.len() {
+            if break_char == total_chars {
                 break;
             }
 
-            // advance start with overlap, but always move forward
-            let next_start = break_point.saturating_sub(self.overlap_chars);
-            start = next_start.max(start + 1);
+            let next_start = break_char.saturating_sub(self.overlap_chars);
+            start_char = next_start.max(start_char + 1);
         }
 
         chunks
     }
 }
+
+
 
 #[cfg(test)]
 mod tests {

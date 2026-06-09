@@ -128,6 +128,13 @@ pub struct DoctorCheck {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GrepMatch {
+    pub path: Utf8PathBuf,
+    pub line_number: usize,
+    pub line: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailureRecord {
     pub id: i64,

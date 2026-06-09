@@ -1,6 +1,6 @@
-use crate::ExtractionOutput;
 use crate::extractor::{ExtractionError, Extractor};
 use crate::normalize::normalize_text;
+use crate::{ExtractionOutput, ExtractionWarning, ExtractionWarningCode};
 use camino::Utf8Path;
 use lss_config::ExtractionConfig;
 use std::fs;
@@ -31,10 +31,13 @@ impl Extractor for TextExtractor {
                 path: path.to_owned(),
                 mime: "text/plain".to_string(),
                 text: String::new(),
-                warnings: vec![format!(
-                    "File size {} exceeds limit {}",
-                    file_size, config.max_file_bytes
-                )],
+                warnings: vec![ExtractionWarning {
+                    code: ExtractionWarningCode::FileTooLarge,
+                    message: format!(
+                        "File size {} exceeds limit {}",
+                        file_size, config.max_file_bytes
+                    ),
+                }],
                 metadata: crate::ExtractionMetadata {
                     duration_ms: start.elapsed().as_millis() as u64,
                     ..Default::default()
@@ -58,10 +61,13 @@ impl Extractor for TextExtractor {
                 .chars()
                 .take(config.max_extracted_chars)
                 .collect::<String>();
-            warnings.push(format!(
-                "Text truncated to {} characters",
-                config.max_extracted_chars
-            ));
+            warnings.push(ExtractionWarning {
+                code: ExtractionWarningCode::TruncatedChars,
+                message: format!(
+                    "Text truncated to {} characters",
+                    config.max_extracted_chars
+                ),
+            });
         }
 
         Ok(ExtractionOutput {

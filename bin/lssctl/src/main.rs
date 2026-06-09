@@ -123,6 +123,67 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Some("grep") => {
+            let mut iter = args.iter().skip(2).peekable();
+            let mut case_sensitive = true;
+            let mut limit = 100usize;
+            let mut filetype: Option<String> = None;
+
+            while let Some(arg) = iter.next_if(|a| a.starts_with('-')) {
+                match arg.as_str() {
+                    "-i" => case_sensitive = false,
+                    "-n" => {} // line numbers are always included
+                    l if l.starts_with("--limit=") => {
+                        if let Ok(n) = l.trim_start_matches("--limit=").parse() {
+                            limit = n;
+                        }
+                    }
+                    l if l.starts_with("--filetype=") => {
+                        filetype = Some(l.trim_start_matches("--filetype=").to_string());
+                    }
+                    _ => {}
+                }
+            }
+
+            let pattern: String = iter.cloned().collect::<Vec<_>>().join(" ");
+            if pattern.is_empty() {
+                println!("usage: lssctl grep [OPTIONS] <pattern>");
+                return Ok(());
+            }
+
+            let config = AppConfig::load_or_default(&paths)?;
+            let socket_path = config.daemon.socket_path(&paths);
+            let mut stream = UnixStream::connect(socket_path.as_std_path()).await?;
+            write_frame(
+                &mut stream,
+                &RequestEnvelope::new(Request::GrepQuery {
+                    query_id: QueryId::new(),
+                    pattern,
+                    case_sensitive,
+                    limit,
+                    filetype_filters: filetype.map(|f| vec![f]).unwrap_or_default(),
+                }),
+            )
+            .await?;
+
+            loop {
+                let envelope: ResponseEnvelope = read_frame(&mut stream).await?;
+                match envelope.response {
+                    Response::GrepChunk { matches, is_final, .. } => {
+                        for m in &matches {
+                            println!("{}:{}:{}", m.path, m.line_number, m.line);
+                        }
+                        if is_final {
+                            break;
+                        }
+                    }
+                    other => {
+                        print_response(other);
+                        break;
+                    }
+                }
+            }
+        }
         _ => print_usage(&paths),
     }
 

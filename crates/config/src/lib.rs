@@ -118,17 +118,14 @@ impl AppConfig {
              crawl_concurrency = 8\n\
              extraction_concurrency = 4\n\
              embedding_concurrency = 2\n\
-             max_in_flight_jobs = 256\n\n\
+              max_in_flight_jobs = 256\n\
+              max_vectors = 100000\n\n\
              [extraction]\n\
              max_file_bytes = 33554432\n\
-             max_pdf_pages = 200\n\
              max_extracted_chars = 250000\n\
              timeout_seconds = 15\n\
              enable_plain_text = true\n\
-             enable_configs = true\n\
-             enable_docx = true\n\
-             enable_odt = true\n\
-             enable_pdf = true\n\n\
+             enable_configs = true\n\n\
              [embedding]\n\
              model_path = \"\"\n\
              backend = \"auto\"\n\
@@ -239,6 +236,7 @@ pub struct IndexingConfig {
     pub extraction_concurrency: usize,
     pub embedding_concurrency: usize,
     pub max_in_flight_jobs: usize,
+    pub max_vectors: usize,
 }
 
 impl Default for IndexingConfig {
@@ -248,6 +246,7 @@ impl Default for IndexingConfig {
             extraction_concurrency: 4,
             embedding_concurrency: 2,
             max_in_flight_jobs: 256,
+            max_vectors: 100_000,
         }
     }
 }
@@ -256,28 +255,20 @@ impl Default for IndexingConfig {
 #[serde(default)]
 pub struct ExtractionConfig {
     pub max_file_bytes: u64,
-    pub max_pdf_pages: u32,
     pub max_extracted_chars: usize,
     pub timeout_seconds: u64,
     pub enable_plain_text: bool,
     pub enable_configs: bool,
-    pub enable_docx: bool,
-    pub enable_odt: bool,
-    pub enable_pdf: bool,
 }
 
 impl Default for ExtractionConfig {
     fn default() -> Self {
         Self {
             max_file_bytes: 32 * 1024 * 1024,
-            max_pdf_pages: 200,
             max_extracted_chars: 250_000,
             timeout_seconds: 15,
             enable_plain_text: true,
             enable_configs: true,
-            enable_docx: true,
-            enable_odt: true,
-            enable_pdf: true,
         }
     }
 }
@@ -466,12 +457,12 @@ fn validate_indexing(config: &IndexingConfig) -> Result<(), ConfigError> {
         config.embedding_concurrency,
     )?;
     validate_positive_usize("indexing.max_in_flight_jobs", config.max_in_flight_jobs)?;
+    validate_positive_usize("indexing.max_vectors", config.max_vectors)?;
     Ok(())
 }
 
 fn validate_extraction(config: &ExtractionConfig) -> Result<(), ConfigError> {
     validate_positive_u64("extraction.max_file_bytes", config.max_file_bytes)?;
-    validate_positive_u32("extraction.max_pdf_pages", config.max_pdf_pages)?;
     validate_positive_usize("extraction.max_extracted_chars", config.max_extracted_chars)?;
     validate_positive_u64("extraction.timeout_seconds", config.timeout_seconds)?;
     Ok(())
@@ -536,17 +527,6 @@ fn validate_positive_usize(field: &'static str, value: usize) -> Result<(), Conf
 }
 
 fn validate_positive_u64(field: &'static str, value: u64) -> Result<(), ConfigError> {
-    if value == 0 {
-        Err(ConfigError::InvalidNumericSetting {
-            field,
-            reason: "must be greater than zero",
-        })
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_positive_u32(field: &'static str, value: u32) -> Result<(), ConfigError> {
     if value == 0 {
         Err(ConfigError::InvalidNumericSetting {
             field,

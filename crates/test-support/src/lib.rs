@@ -1,3 +1,8 @@
+pub mod bench;
+pub mod bench_env;
+pub mod corpus;
+pub mod fixtures;
+
 use camino::Utf8PathBuf;
 use std::fs;
 use tempfile::{TempDir, tempdir};
